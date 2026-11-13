@@ -20,6 +20,7 @@ Commands:
   sim     Shots-to-win statistics of a shooter vs a placer
             --shooter NAME (broadside)  --placer NAME (uniform)
   duel    Head-to-head win rate: duel A B [--placer-a P] [--placer-b P]
+            --match N  play matches of N games in which both sides may learn
   matrix  Placement game: placer tilt vs shooter's assumed tilt
             --alphas 0,1,2  --base density|greedy|broadside
   bench   Time the exact posterior on the empty board
@@ -157,6 +158,7 @@ fn cmd_duel(o: &Opts) -> Result<(), String> {
     check_placer(&pa)?;
     check_placer(&pb)?;
     let games = o.get("games", 1000u64)?;
+    let match_len = o.get("match", 1u64)?;
     let seed = o.get("seed", random_seed())?;
     let r = sim::duel(
         &Player {
@@ -168,9 +170,10 @@ fn cmd_duel(o: &Opts) -> Result<(), String> {
             placer: &|| ai::placer(&pb).unwrap(),
         },
         games,
+        match_len,
         seed,
         o.get("threads", threads())?,
-        &progress(games),
+        &progress(games.div_ceil(match_len.max(1))),
     );
     let p = r.a_rate();
     let se = (p * (1.0 - p) / games as f64).sqrt();
@@ -181,6 +184,15 @@ fn cmd_duel(o: &Opts) -> Result<(), String> {
         100.0 * p,
         100.0 * se
     );
+    if match_len > 1 {
+        let pl = r.a_rate_late();
+        let n = (r.a_wins_late + r.b_wins_late) as f64;
+        println!(
+            "  matches of {match_len}: A wins {:.2}% ± {:.2} over the second half of each match",
+            100.0 * pl,
+            100.0 * (pl * (1.0 - pl) / n).sqrt()
+        );
+    }
     print_stats(&format!("  {a} shots"), &r.a_stats);
     print_stats(&format!("  {b} shots"), &r.b_stats);
     println!("seed {seed}");
@@ -347,6 +359,57 @@ fn solve_game(m: &[Vec<f64>], rounds: usize) -> (Vec<f64>, Vec<f64>, f64) {
     (rows, cols, value)
 }
 
+/// Fits placement tilts precisely and prints them as Rust source for
+/// `crates/core/src/ai/tilts.rs`.
+fn cmd_fit_tilts(o: &Opts) -> Result<(), String> {
+    use broadside_core::ai::placement::Tilt;
+    let alphas: Vec<f64> = o
+        .str("alphas", "0.25,0.5,0.75,1,1.25,1.5,1.75,2,2.5,3")
+        .split(',')
+        .map(|a| a.parse().map_err(|_| format!("bad alpha {a}")))
+        .collect::<Result<_, _>>()?;
+    let rounds = o.get("rounds", 60usize)?;
+    let samples = o.get("samples", 1_000_000usize)?;
+    let u = Posterior::compute(&Knowledge::new());
+    let fits: Vec<(f64, Tilt)> = std::thread::scope(|s| {
+        let hs: Vec<_> = alphas
+            .iter()
+            .map(|&a| s.spawn(move || (a, Tilt::fit(a, rounds, samples, 0xB5))))
+            .collect();
+        hs.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    println!(
+        "//! Precomputed placement tilts (see `broadside fit-tilts`): alpha and theta per cell."
+    );
+    println!("//! Generated with {rounds} rounds of {samples} samples each.");
+    println!();
+    println!("pub const BAKED: &[(f64, [f64; 100])] = &[");
+    for (a, t) in &fits {
+        // Check: occupancy against target u^(1-a), normalized to 17 cells.
+        let mut rng = Rng::new(99);
+        let n = 400_000;
+        let mut occ = [0u64; 100];
+        for _ in 0..n {
+            for c in t.sample(&mut rng).occupied().iter() {
+                occ[c] += 1;
+            }
+        }
+        let raw: Vec<f64> = (0..100).map(|c| u.prob(c).powf(1.0 - a)).collect();
+        let scale = 17.0 / raw.iter().sum::<f64>();
+        let worst = (0..100)
+            .map(|c| (occ[c] as f64 / n as f64 / (raw[c] * scale) - 1.0).abs())
+            .fold(0.0, f64::max);
+        println!(
+            "    // alpha {a}: worst cell occupancy off target by {:.2}%",
+            100.0 * worst
+        );
+        let theta: Vec<String> = t.theta.iter().map(|x| format!("{x:.6}")).collect();
+        println!("    ({a:?}, [{}]),", theta.join(", "));
+    }
+    println!("];");
+    Ok(())
+}
+
 fn cmd_bench(o: &Opts) -> Result<(), String> {
     let k = Knowledge::new();
     for t in [1, o.get("threads", threads())?] {
@@ -379,6 +442,7 @@ fn run() -> Result<(), String> {
         Some("bench") => cmd_bench(&o),
         Some("analyze") => cmd_analyze(&o),
         Some("matrix") => cmd_matrix(&o),
+        Some("fit-tilts") => cmd_fit_tilts(&o),
         Some("count") => {
             let start = Instant::now();
             let total = fleet::count_layouts();

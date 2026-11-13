@@ -91,13 +91,23 @@ impl Tilt {
     }
 }
 
-/// Shares fitted tilts between placers and shooters (fitting takes a moment).
+/// The tilt for `alpha`: precomputed (`broadside fit-tilts`) when available,
+/// else fitted on first use. Shared between placers and shooters.
 pub fn fitted(alpha: f64) -> Arc<Tilt> {
     static FITS: OnceLock<Mutex<HashMap<u64, Arc<Tilt>>>> = OnceLock::new();
     let fits = FITS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut f = fits.lock().unwrap();
     f.entry(alpha.to_bits())
-        .or_insert_with(|| Arc::new(Tilt::fit(alpha, 30, 200_000, 0xB5)))
+        .or_insert_with(|| {
+            if alpha == 0.0 {
+                return Arc::new(Tilt::from_theta([0.0; CELLS]));
+            }
+            let baked = super::tilts::BAKED.iter().find(|(a, _)| *a == alpha);
+            Arc::new(match baked {
+                Some((_, theta)) => Tilt::from_theta(*theta),
+                None => Tilt::fit(alpha, 30, 200_000, 0xB5),
+            })
+        })
         .clone()
 }
 
@@ -169,6 +179,117 @@ impl Placer for MixedPlacer {
     }
 }
 
+/// Equilibrium play that turns exploitative against opponents who keep
+/// looking in the same places.
+///
+/// It records how late the opponent shoots each cell (never shooting a cell
+/// counts as latest). The options are the equilibrium mix and two tilts toward
+/// the cells the opponent reaches last; a UCB bandit picks among them by the
+/// shots the opponent needed. Against an opponent that adapts, exploitation
+/// stops paying and the bandit drifts back to the equilibrium.
+pub struct AdaptivePlacer {
+    equilibrium: MixedPlacer,
+    lateness: [f64; CELLS],
+    games: u32,
+    exploit: [Option<Tilt>; 2],
+    arm_plays: [u32; 3],
+    arm_shots: [f64; 3],
+    last_arm: usize,
+}
+
+/// Strength of the exploiting tilts, in theta units per standard deviation of lateness.
+const EXPLOIT_STRENGTH: [f64; 2] = [0.5, 1.0];
+/// Games of pure equilibrium before exploitation is considered.
+const WARMUP_GAMES: u32 = 4;
+
+impl Default for AdaptivePlacer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AdaptivePlacer {
+    pub fn new() -> Self {
+        Self {
+            equilibrium: MixedPlacer::equilibrium(),
+            lateness: [0.0; CELLS],
+            games: 0,
+            exploit: [None, None],
+            arm_plays: [0; 3],
+            arm_shots: [0.0; 3],
+            last_arm: 0,
+        }
+    }
+
+    fn pick_arm(&self) -> usize {
+        if self.games < WARMUP_GAMES {
+            return 0;
+        }
+        // UCB1 on shots the opponent needed (scaled to roughly [0, 1]).
+        if let Some(a) = (0..3).find(|&a| self.arm_plays[a] == 0) {
+            return a;
+        }
+        let total: f64 = self.arm_plays.iter().map(|&n| n as f64).sum();
+        (0..3)
+            .max_by(|&a, &b| {
+                let ucb = |i: usize| {
+                    let n = self.arm_plays[i] as f64;
+                    self.arm_shots[i] / n / 100.0 + 0.15 * (2.0 * total.ln() / n).sqrt()
+                };
+                ucb(a).total_cmp(&ucb(b))
+            })
+            .unwrap()
+    }
+}
+
+impl Placer for AdaptivePlacer {
+    fn name(&self) -> String {
+        "adaptive".into()
+    }
+
+    fn place(&mut self, rng: &mut Rng) -> Layout {
+        self.last_arm = self.pick_arm();
+        match self.last_arm {
+            0 => self.equilibrium.place(rng),
+            a => self.exploit[a - 1]
+                .as_ref()
+                .expect("exploit tilts exist after warmup")
+                .sample(rng),
+        }
+    }
+
+    fn learn(&mut self, _layout: &Layout, opponent_shots: &[usize]) {
+        let n = opponent_shots.len().max(1) as f64;
+        let mut late = [1.0; CELLS];
+        for (i, &c) in opponent_shots.iter().enumerate() {
+            late[c] = i as f64 / n;
+        }
+        for (l, x) in self.lateness.iter_mut().zip(late) {
+            *l += x;
+        }
+        self.games += 1;
+        self.arm_plays[self.last_arm] += 1;
+        self.arm_shots[self.last_arm] += opponent_shots.len() as f64;
+
+        let mean_l: Vec<f64> = self
+            .lateness
+            .iter()
+            .map(|l| l / self.games as f64)
+            .collect();
+        let mu = mean_l.iter().sum::<f64>() / CELLS as f64;
+        let sd = (mean_l.iter().map(|x| (x - mu).powi(2)).sum::<f64>() / CELLS as f64)
+            .sqrt()
+            .max(1e-6);
+        for (slot, strength) in self.exploit.iter_mut().zip(EXPLOIT_STRENGTH) {
+            let mut theta = [0.0; CELLS];
+            for (t, l) in theta.iter_mut().zip(&mean_l) {
+                *t = strength * (l - mu) / sd;
+            }
+            *slot = Some(Tilt::from_theta(theta));
+        }
+    }
+}
+
 /// Cell occupancy of a placer, estimated from `n` samples.
 pub fn occupancy(placer: &mut dyn Placer, n: usize, rng: &mut Rng) -> [f64; CELLS] {
     let mut occ = [0u64; CELLS];
@@ -210,5 +331,24 @@ mod tests {
             (corner - 0.17).abs() < 0.03 && (centre - 0.17).abs() < 0.03,
             "{corner} {centre}"
         );
+    }
+}
+
+#[cfg(test)]
+mod adaptive_tests {
+    use super::*;
+
+    #[test]
+    fn adaptive_placer_stays_legal_while_learning() {
+        let mut p = AdaptivePlacer::new();
+        let mut rng = Rng::new(4);
+        for g in 0..30 {
+            let l = p.place(&mut rng);
+            assert!(Layout::new(l.slots).is_some());
+            // An opponent that always sweeps the board in reading order.
+            let shots: Vec<usize> = (0..CELLS).take(60 + g).collect();
+            p.learn(&l, &shots);
+        }
+        assert!(p.arm_plays.iter().sum::<u32>() == 30);
     }
 }

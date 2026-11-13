@@ -36,7 +36,21 @@ pub struct Broadside {
     pub search: Search,
     /// Expected placement habits of the opponent (None = uniform).
     pub prior: Option<Arc<Tilt>>,
+    /// Learns the opponent's habits from revealed layouts, replacing `prior`
+    /// (None = keep `prior` fixed).
+    pub learner: Option<Learner>,
 }
+
+/// Cell occupancy of the opponent layouts seen so far.
+#[derive(Clone, Default)]
+pub struct Learner {
+    seen: Vec<u32>,
+    games: u32,
+}
+
+/// Pseudo-games of uniform placement mixed into the learned occupancy, so a
+/// few odd layouts do not swing the prior.
+const LEARN_PSEUDO_GAMES: f64 = 30.0;
 
 impl Broadside {
     pub fn new() -> Self {
@@ -49,6 +63,7 @@ impl Broadside {
                 exact_limit: 400,
             },
             prior: None,
+            learner: Some(Learner::default()),
         }
     }
 
@@ -228,6 +243,28 @@ impl Broadside {
 }
 
 impl Shooter for Broadside {
+    fn learn(&mut self, layout: &crate::game::Layout) {
+        let Some(l) = self.learner.as_mut() else {
+            return;
+        };
+        l.seen.resize(CELLS, 0);
+        for c in Bits(layout.occupied().0) {
+            l.seen[c] += 1;
+        }
+        l.games += 1;
+        // Occupancy shrunk toward uniform placement, then a first-order tilt:
+        // occupancy scales with e^theta.
+        let u = &Posterior::cached(&Knowledge::new(), 1);
+        let (n, k) = (l.games as f64, LEARN_PSEUDO_GAMES);
+        let mut theta = [0.0; CELLS];
+        for (c, t) in theta.iter_mut().enumerate() {
+            let base = u.prob(c);
+            let occ = (l.seen[c] as f64 + k * base) / (n + k);
+            *t = (occ / base).ln();
+        }
+        self.prior = Some(Arc::new(Tilt::from_theta(theta)));
+    }
+
     fn name(&self) -> String {
         if self.search.max_afloat == 0 {
             "greedy".into()

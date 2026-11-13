@@ -3,6 +3,7 @@
 pub mod baseline;
 pub mod engine;
 pub mod placement;
+mod tilts;
 
 use crate::game::{Knowledge, Layout};
 use crate::rng::Rng;
@@ -20,6 +21,8 @@ pub trait Shooter: Send {
 pub trait Placer: Send {
     fn name(&self) -> String;
     fn place(&mut self, rng: &mut Rng) -> Layout;
+    /// After a game: our layout and every shot the opponent fired at it.
+    fn learn(&mut self, _layout: &Layout, _opponent_shots: &[usize]) {}
 }
 
 /// Every legal layout equally likely.
@@ -83,10 +86,12 @@ pub fn shooter(name: &str) -> Option<Box<dyn Shooter>> {
             "density" => Box::new(baseline::Density { prior }),
             "greedy" => Box::new(engine::Broadside {
                 prior,
+                learner: None,
                 ..engine::Broadside::greedy()
             }),
             "broadside" => Box::new(engine::Broadside {
                 prior,
+                learner: None,
                 ..engine::Broadside::new()
             }),
             _ => return None,
@@ -132,7 +137,8 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
     Some(match name {
         "uniform" => Box::new(UniformPlacer),
         "spaced" => Box::new(SpacedPlacer),
-        "broadside" => Box::new(placement::MixedPlacer::equilibrium()),
+        "broadside" => Box::new(placement::AdaptivePlacer::new()),
+        "equilibrium" => Box::new(placement::MixedPlacer::equilibrium()),
         n if n.starts_with("mix:") => {
             let parts: Vec<(f64, f64)> = n[4..]
                 .split(',')
