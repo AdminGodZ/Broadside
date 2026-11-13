@@ -154,6 +154,56 @@ impl Posterior {
         }
     }
 
+    /// Every joint placement of the afloat ships with its layout count, or
+    /// `None` if there are more than `limit` of them. Index by ship.
+    pub fn enumerate_afloat(
+        k: &Knowledge,
+        limit: usize,
+    ) -> Option<Vec<([Option<u8>; SHIPS], u64)>> {
+        fn rec(
+            k: &Knowledge,
+            ships: &[usize],
+            fixed: &mut Vec<(usize, u8)>,
+            out: &mut Vec<([Option<u8>; SHIPS], u64)>,
+            limit: usize,
+        ) -> bool {
+            let p = Posterior::compute_fixed(k, fixed, 1);
+            let Some((&ship, rest)) = ships.split_first() else {
+                let mut t = [None; SHIPS];
+                for &(s, slot) in fixed.iter() {
+                    t[s] = Some(slot);
+                }
+                out.push((t, p.layouts));
+                return out.len() <= limit;
+            };
+            for slot in 0..SLOTS {
+                if p.ships[ship][slot] == 0 {
+                    continue;
+                }
+                fixed.push((ship, slot as u8));
+                let ok = if rest.is_empty() {
+                    // Last ship: its weights are the leaf counts already.
+                    let mut t = [None; SHIPS];
+                    for &(s, sl) in fixed.iter() {
+                        t[s] = Some(sl);
+                    }
+                    out.push((t, p.ships[ship][slot]));
+                    out.len() <= limit
+                } else {
+                    rec(k, rest, fixed, out, limit)
+                };
+                fixed.pop();
+                if !ok {
+                    return false;
+                }
+            }
+            true
+        }
+        let ships: Vec<usize> = Bits(k.afloat_mask() as u128).collect();
+        let mut out = Vec::new();
+        rec(k, &ships, &mut Vec::new(), &mut out, limit).then_some(out)
+    }
+
     /// Draws placements for every ship still afloat, exactly from the
     /// posterior (one conditional computation per ship). Index by ship.
     pub fn sample_afloat(k: &Knowledge, rng: &mut crate::rng::Rng) -> [Option<u8>; SHIPS] {
@@ -711,6 +761,24 @@ mod tests {
                     .untransform(crate::symmetry::canonical(&img).1);
                 assert_eq!(a.cells, b.cells);
                 assert_eq!(a.ships, b.ships);
+            }
+        }
+    }
+
+    #[test]
+    fn enumerated_futures_sum_to_layouts() {
+        let mut rng = Rng::new(31);
+        let mut checked = 0;
+        while checked < 30 {
+            let shots = 50 + rng.below(25) as usize;
+            let k = random_state(&mut rng, shots);
+            if k.won() {
+                continue;
+            }
+            let p = Posterior::compute(&k);
+            if let Some(f) = Posterior::enumerate_afloat(&k, 5000) {
+                assert_eq!(f.iter().map(|x| x.1).sum::<u64>(), p.layouts);
+                checked += 1;
             }
         }
     }

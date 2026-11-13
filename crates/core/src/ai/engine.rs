@@ -25,13 +25,13 @@ pub struct Search {
     pub candidates: usize,
     /// Sampled layouts per decision when the posterior is not enumerated.
     pub samples: usize,
+    /// Enumerate the afloat ships' placements exactly when at most this many.
+    pub exact_limit: usize,
 }
 
 pub struct Broadside {
     pub threads: usize,
     pub search: Search,
-    /// Hunting score weight per ship (1.0 each = plain hit probability).
-    pub hunt_weights: [f64; SHIPS],
 }
 
 impl Broadside {
@@ -42,8 +42,8 @@ impl Broadside {
                 max_afloat: 2,
                 candidates: 6,
                 samples: 48,
+                exact_limit: 400,
             },
-            hunt_weights: [1.0; SHIPS],
         }
     }
 
@@ -130,28 +130,20 @@ impl Broadside {
         cands.truncate(self.search.candidates);
 
         // The futures to evaluate against: (afloat placements, weight).
-        let afloat: Vec<usize> = Bits(k.afloat_mask() as u128).collect();
-        let futures: Vec<([Option<u8>; SHIPS], u64)> = if let [ship] = afloat[..] {
-            (0..p.ships[ship].len())
-                .filter(|&slot| p.ships[ship][slot] > 0)
-                .map(|slot| {
-                    let mut t = [None; SHIPS];
-                    t[ship] = Some(slot as u8);
-                    (t, p.ships[ship][slot])
-                })
-                .collect()
-        } else {
+        // Enumerate them exactly when there are few enough, else sample.
+        let enumerated = Posterior::enumerate_afloat(k, self.search.exact_limit);
+        let exact = enumerated.is_some();
+        let futures: Vec<([Option<u8>; SHIPS], u64)> = enumerated.unwrap_or_else(|| {
             (0..self.search.samples)
                 .map(|_| (Posterior::sample_afloat(k, rng), 1))
                 .collect()
-        };
+        });
 
         // cands[0] is the base policy's own move (most likely, lowest cell).
         let base: Vec<f64> = futures
             .iter()
             .map(|(t, _)| rollout(k, cands[0], t) as f64)
             .collect();
-        let exact = afloat.len() == 1;
         let total_w: f64 = futures.iter().map(|(_, w)| *w as f64).sum();
         let mut best = (0.0, cands[0]); // (expected shots saved vs base, cell)
         for &x in &cands[1..] {
@@ -203,21 +195,7 @@ impl Shooter for Broadside {
         if (k.afloat_mask().count_ones() as usize) <= self.search.max_afloat {
             return self.search(k, &p, rng);
         }
-        if self.hunt_weights == [1.0; SHIPS] {
-            return greedy_choice(k, &p, rng);
-        }
-        let sc = p.ship_cells();
-        let w = self.hunt_weights;
-        let mut best = (f64::NEG_INFINITY, 0u128);
-        for c in Bits(unknown) {
-            let v: f64 = (0..SHIPS).map(|s| w[s] * sc[s][c] as f64).sum();
-            if v > best.0 * (1.0 + 1e-12) {
-                best = (v, 1 << c);
-            } else if v >= best.0 * (1.0 - 1e-12) {
-                best.1 |= 1 << c;
-            }
-        }
-        rng.pick_bit(best.1)
+        greedy_choice(k, &p, rng)
     }
 }
 

@@ -93,33 +93,30 @@ pub fn shooter(name: &str) -> Option<Box<dyn Shooter>> {
     Some(match name {
         "broadside" => Box::new(engine::Broadside::new()),
         "greedy" => Box::new(engine::Broadside::greedy()),
-        // broadside:AFLOAT:CANDIDATES:SAMPLES[:W0,W1,W2,W3,W4], for tuning experiments.
+        // broadside:AFLOAT:CANDIDATES:SAMPLES[:EXACT_LIMIT], for tuning experiments.
         n if n.starts_with("broadside:") => {
-            let parts: Vec<&str> = n.split(':').skip(1).collect();
-            let v: Vec<usize> = parts
-                .iter()
-                .take(3)
+            let v: Vec<usize> = n
+                .split(':')
+                .skip(1)
                 .map(|x| x.parse().ok())
                 .collect::<Option<_>>()?;
-            let &[max_afloat, candidates, samples] = &v[..] else {
-                return None;
-            };
-            let mut b = engine::Broadside {
-                search: engine::Search {
-                    max_afloat,
-                    candidates,
-                    samples,
-                },
-                ..engine::Broadside::new()
-            };
-            if let Some(w) = parts.get(3) {
-                let w: Vec<f64> = w
-                    .split(',')
-                    .map(|x| x.parse().ok())
-                    .collect::<Option<_>>()?;
-                b.hunt_weights = w.try_into().ok()?;
+            let mut search = engine::Broadside::new().search;
+            match v[..] {
+                [a, c, s] => (search.max_afloat, search.candidates, search.samples) = (a, c, s),
+                [a, c, s, e] => {
+                    (
+                        search.max_afloat,
+                        search.candidates,
+                        search.samples,
+                        search.exact_limit,
+                    ) = (a, c, s, e)
+                }
+                _ => return None,
             }
-            Box::new(b)
+            Box::new(engine::Broadside {
+                search,
+                ..engine::Broadside::new()
+            })
         }
         "density" => Box::new(baseline::Density::default()),
         // density@tiltA: density that expects a tilt-A placer.
