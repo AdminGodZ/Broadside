@@ -1,11 +1,13 @@
 //! Classic opponents to measure against. They reason the way typical bots do:
 //! heuristically, without exact inference.
 
-use super::{Shooter, argmax_random};
+use super::Shooter;
+use super::placement::Tilt;
 use crate::bitboard::{Bits, CELLS, SIZE, neighbours4};
 use crate::fleet::{LENGTHS, SEGMENTS, SHIPS, THROUGH};
 use crate::game::Knowledge;
 use crate::rng::Rng;
+use std::sync::Arc;
 
 /// Fires at a uniformly random unshot cell.
 pub struct RandomShooter;
@@ -96,7 +98,13 @@ impl Shooter for HuntTarget {
 /// The well-known probability-density bot: for every ship still afloat, count
 /// placements that avoid misses and (guessed) sunk ships; placements through
 /// unresolved hits count far more. Fire at the densest cell.
-pub struct Density;
+///
+/// With a `prior`, placements are weighted by how likely that placer is to use
+/// them: a shooter that has learned (or guessed) its opponent's habits.
+#[derive(Default)]
+pub struct Density {
+    pub prior: Option<Arc<Tilt>>,
+}
 
 impl Shooter for Density {
     fn name(&self) -> String {
@@ -108,26 +116,35 @@ impl Shooter for Density {
         let sunk_cells = guess_sunk_cells(k);
         let active = k.hits.0 & !sunk_cells;
         let blocked = k.misses.0 | sunk_cells;
-        let mut score = [0u64; CELLS];
+        let mut score = [0f64; CELLS];
         for s in (0..SHIPS).filter(|&s| k.sunk[s].is_none()) {
             let len = LENGTHS[s];
-            for &m in &SEGMENTS[len] {
+            for (slot, &m) in SEGMENTS[len].iter().enumerate() {
                 if m == 0 || m & blocked != 0 {
                     continue;
                 }
                 let through = (m & active).count_ones();
                 let w = if active == 0 {
-                    1
+                    1.0
                 } else if through == 0 {
-                    0
+                    0.0
                 } else {
-                    100u64.pow(through)
+                    100f64.powi(through as i32)
                 };
+                let w = w * self.prior.as_ref().map_or(1.0, |t| t.weight[s][slot]);
                 for c in Bits(m) {
                     score[c] += w;
                 }
             }
         }
-        argmax_random(unknown, rng, |c| score[c])
+        let mut best = (f64::NEG_INFINITY, 0u128);
+        for c in Bits(unknown) {
+            if score[c] > best.0 {
+                best = (score[c], 1 << c);
+            } else if score[c] == best.0 {
+                best.1 |= 1 << c;
+            }
+        }
+        rng.pick_bit(best.1)
     }
 }

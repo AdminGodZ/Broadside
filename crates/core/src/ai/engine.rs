@@ -39,9 +39,9 @@ impl Broadside {
         Self {
             threads: 1,
             search: Search {
-                max_afloat: 1,
-                candidates: 8,
-                samples: 64,
+                max_afloat: 2,
+                candidates: 6,
+                samples: 48,
             },
             hunt_weights: [1.0; SHIPS],
         }

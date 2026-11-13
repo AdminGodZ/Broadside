@@ -20,6 +20,7 @@ Commands:
   sim     Shots-to-win statistics of a shooter vs a placer
             --shooter NAME (broadside)  --placer NAME (uniform)
   duel    Head-to-head win rate: duel A B [--placer-a P] [--placer-b P]
+  matrix  Placement game: placer tilt vs shooter's assumed tilt (--alphas, --games)
   bench   Time the exact posterior on the empty board
   count   Count every legal fleet layout (multithreaded brute force)
 
@@ -256,6 +257,93 @@ fn cmd_analyze(o: &Opts) -> Result<(), String> {
     Ok(())
 }
 
+/// Placement game: mean shots for every (placer tilt, shooter's assumed tilt).
+/// Rows are placers; the placer wants the largest row minimum.
+fn cmd_matrix(o: &Opts) -> Result<(), String> {
+    let alphas: Vec<f64> = o
+        .str("alphas", "0,0.5,1,1.5,2,2.5,3")
+        .split(',')
+        .map(|a| a.parse().map_err(|_| format!("bad alpha {a}")))
+        .collect::<Result<_, _>>()?;
+    let games = o.get("games", 20000u64)?;
+    let seed = o.get("seed", random_seed())?;
+    let threads = o.get("threads", threads())?;
+    print!("placer \\ shooter");
+    for b in &alphas {
+        print!("{:>9}", format!("@{b}"));
+    }
+    println!("{:>9}", "min");
+    let mut m = vec![vec![0.0; alphas.len()]; alphas.len()];
+    for (i, a) in alphas.iter().enumerate() {
+        let placer = format!("tilt{a}");
+        print!("{placer:<16}");
+        for (j, b) in alphas.iter().enumerate() {
+            let sh = format!("density@tilt{b}");
+            let s = sim::benchmark(
+                &|| ai::shooter(&sh).unwrap(),
+                &|| ai::placer(&placer).unwrap(),
+                games,
+                seed,
+                threads,
+                &|_| {},
+            );
+            m[i][j] = s.mean();
+            print!("{:>9.3}", s.mean());
+            let _ = std::io::stdout().flush();
+        }
+        println!(
+            "{:>9.3}",
+            m[i].iter().cloned().fold(f64::INFINITY, f64::min)
+        );
+    }
+    println!("density shooter, {games} games per cell, seed {seed}");
+    let (placer_mix, shooter_mix, value) = solve_game(&m, 200_000);
+    let fmt = |mix: &[f64]| {
+        alphas
+            .iter()
+            .zip(mix)
+            .filter(|(_, p)| **p > 0.005)
+            .map(|(a, p)| format!("{a}: {:.0}%", 100.0 * p))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    println!("equilibrium value {value:.3} shots");
+    println!("  placer mix  (tilt α): {}", fmt(&placer_mix));
+    println!("  shooter mix (expects α): {}", fmt(&shooter_mix));
+    Ok(())
+}
+
+/// Mixed equilibrium of a zero-sum matrix game by fictitious play. The row
+/// player maximizes `m[i][j]`. Returns (row mix, column mix, value).
+fn solve_game(m: &[Vec<f64>], rounds: usize) -> (Vec<f64>, Vec<f64>, f64) {
+    let (r, c) = (m.len(), m[0].len());
+    let (mut row_counts, mut col_counts) = (vec![0u64; r], vec![0u64; c]);
+    let (mut row_payoff, mut col_payoff) = (vec![0.0f64; r], vec![0.0f64; c]);
+    for _ in 0..rounds {
+        let i = (0..r)
+            .max_by(|&a, &b| row_payoff[a].total_cmp(&row_payoff[b]))
+            .unwrap();
+        let j = (0..c)
+            .min_by(|&a, &b| col_payoff[a].total_cmp(&col_payoff[b]))
+            .unwrap();
+        row_counts[i] += 1;
+        col_counts[j] += 1;
+        for (k, p) in row_payoff.iter_mut().enumerate() {
+            *p += m[k][j];
+        }
+        for (k, p) in col_payoff.iter_mut().enumerate() {
+            *p += m[i][k];
+        }
+    }
+    let n = rounds as f64;
+    let rows: Vec<f64> = row_counts.iter().map(|&x| x as f64 / n).collect();
+    let cols: Vec<f64> = col_counts.iter().map(|&x| x as f64 / n).collect();
+    let value = (0..r)
+        .map(|i| (0..c).map(|j| rows[i] * cols[j] * m[i][j]).sum::<f64>())
+        .sum();
+    (rows, cols, value)
+}
+
 fn cmd_bench(o: &Opts) -> Result<(), String> {
     let k = Knowledge::new();
     for t in [1, o.get("threads", threads())?] {
@@ -287,6 +375,7 @@ fn run() -> Result<(), String> {
         Some("duel") => cmd_duel(&o),
         Some("bench") => cmd_bench(&o),
         Some("analyze") => cmd_analyze(&o),
+        Some("matrix") => cmd_matrix(&o),
         Some("count") => {
             let start = Instant::now();
             let total = fleet::count_layouts();

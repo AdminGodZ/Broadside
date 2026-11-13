@@ -121,7 +121,14 @@ pub fn shooter(name: &str) -> Option<Box<dyn Shooter>> {
             }
             Box::new(b)
         }
-        "density" => Box::new(baseline::Density),
+        "density" => Box::new(baseline::Density::default()),
+        // density@tiltA: density that expects a tilt-A placer.
+        n if n.starts_with("density@tilt") => {
+            let alpha: f64 = n["density@tilt".len()..].parse().ok()?;
+            Box::new(baseline::Density {
+                prior: Some(placement::fitted(alpha)),
+            })
+        }
         "parity" => Box::new(baseline::HuntTarget { parity: true }),
         "hunt-target" => Box::new(baseline::HuntTarget { parity: false }),
         "random" => Box::new(baseline::RandomShooter),

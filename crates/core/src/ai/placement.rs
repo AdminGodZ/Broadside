@@ -20,23 +20,27 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[derive(Clone)]
 pub struct Tilt {
     pub theta: [f64; CELLS],
+    /// Relative weight of each placement, by ship and slot (0 off the board).
+    pub weight: [[f64; SLOTS]; SHIPS],
     cdf: [[f64; SLOTS]; SHIPS],
 }
 
 impl Tilt {
     pub fn from_theta(theta: [f64; CELLS]) -> Self {
+        let mut weight = [[0.0; SLOTS]; SHIPS];
         let mut cdf = [[0.0; SLOTS]; SHIPS];
-        for (s, row) in cdf.iter_mut().enumerate() {
+        for s in 0..SHIPS {
             let mut acc = 0.0;
-            for (slot, c) in row.iter_mut().enumerate() {
+            for slot in 0..SLOTS {
                 let m = SEGMENTS[LENGTHS[s]][slot];
                 if m != 0 {
-                    acc += Bits(m).map(|x| theta[x]).sum::<f64>().exp();
+                    weight[s][slot] = Bits(m).map(|x| theta[x]).sum::<f64>().exp();
                 }
-                *c = acc;
+                acc += weight[s][slot];
+                cdf[s][slot] = acc;
             }
         }
-        Self { theta, cdf }
+        Self { theta, weight, cdf }
     }
 
     pub fn sample(&self, rng: &mut Rng) -> Layout {
@@ -87,8 +91,8 @@ impl Tilt {
     }
 }
 
-/// Shares fitted tilts between placers (fitting takes a moment).
-fn fitted(alpha: f64) -> Arc<Tilt> {
+/// Shares fitted tilts between placers and shooters (fitting takes a moment).
+pub fn fitted(alpha: f64) -> Arc<Tilt> {
     static FITS: OnceLock<Mutex<HashMap<u64, Arc<Tilt>>>> = OnceLock::new();
     let fits = FITS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut f = fits.lock().unwrap();
