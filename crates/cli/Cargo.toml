@@ -1,0 +1,8 @@
+[package]
+name = "broadside"
+description = "Broadside command-line interface"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+broadside-core = { path = "../core" }

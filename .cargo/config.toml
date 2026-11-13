@@ -1,0 +1,4 @@
+# Compile for this machine's CPU (enables POPCNT, BMI2, AVX2/NEON, ...).
+# Remove if you ever need portable binaries.
+[build]
+rustflags = ["-C", "target-cpu=native"]

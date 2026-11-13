@@ -1,0 +1,7 @@
+[package]
+name = "broadside-core"
+description = "Broadside Battleship engine: rules, bitboards and AI"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
