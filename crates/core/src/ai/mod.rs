@@ -2,6 +2,7 @@
 
 pub mod baseline;
 pub mod engine;
+pub mod placement;
 
 use crate::game::{Knowledge, Layout};
 use crate::rng::Rng;
@@ -86,7 +87,7 @@ pub const SHOOTERS: &[&str] = &[
     "hunt-target",
     "random",
 ];
-pub const PLACERS: &[&str] = &["uniform", "spaced"];
+pub const PLACERS: &[&str] = &["uniform", "spaced", "tiltA (e.g. tilt1, tilt1.5)"];
 
 pub fn shooter(name: &str) -> Option<Box<dyn Shooter>> {
     Some(match name {
@@ -132,6 +133,7 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
     Some(match name {
         "uniform" => Box::new(UniformPlacer),
         "spaced" => Box::new(SpacedPlacer),
+        n if n.starts_with("tilt") => Box::new(placement::TiltedPlacer::new(n[4..].parse().ok()?)),
         _ => return None,
     })
 }

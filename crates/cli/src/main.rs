@@ -1,3 +1,5 @@
+mod ui;
+
 use broadside_core::ai;
 use broadside_core::sim::{self, Player, Stats};
 use broadside_core::{Board, Knowledge, Outcome, Posterior, Rng, fleet};
@@ -12,6 +14,9 @@ Broadside - a Battleship engine
 Usage: broadside <command> [options]
 
 Commands:
+  play    Play against the engine in the terminal
+            --heat  also show where the engine thinks your ships are
+  assist  The engine advises your shots against any opponent; you report results
   sim     Shots-to-win statistics of a shooter vs a placer
             --shooter NAME (broadside)  --placer NAME (uniform)
   duel    Head-to-head win rate: duel A B [--placer-a P] [--placer-b P]
@@ -20,6 +25,9 @@ Commands:
 
 Common options: --games N (1000)  --seed S (random)  --threads T (all cores)
 ";
+
+/// Flags that take no value.
+const SWITCHES: &[&str] = &["heat"];
 
 struct Opts {
     pos: Vec<String>,
@@ -32,7 +40,11 @@ impl Opts {
         let mut flags = HashMap::new();
         let mut args = args.peekable();
         while let Some(a) = args.next() {
-            if let Some(name) = a.strip_prefix("--") {
+            if let Some(name) = a.strip_prefix("--")
+                && SWITCHES.contains(&name)
+            {
+                flags.insert(name.to_string(), "true".into());
+            } else if let Some(name) = a.strip_prefix("--") {
                 let v = args.next().ok_or(format!("--{name} needs a value"))?;
                 flags.insert(name.to_string(), v);
             } else {
@@ -261,6 +273,16 @@ fn cmd_bench(o: &Opts) -> Result<(), String> {
 fn run() -> Result<(), String> {
     let o = Opts::parse(std::env::args().skip(1))?;
     match o.pos.first().map(String::as_str) {
+        Some("play") => ui::play(
+            o.get("seed", random_seed())?,
+            &o.str("shooter", "broadside"),
+            &o.str("placer", "uniform"),
+            o.flags.contains_key("heat"),
+        ),
+        Some("assist") => ui::assist(
+            o.get("seed", random_seed())?,
+            &o.str("shooter", "broadside"),
+        ),
         Some("sim") => cmd_sim(&o),
         Some("duel") => cmd_duel(&o),
         Some("bench") => cmd_bench(&o),
