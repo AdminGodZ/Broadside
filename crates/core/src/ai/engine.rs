@@ -10,12 +10,14 @@
 //! the fewest expected shots. One afloat ship is evaluated exactly, over every
 //! placement it could have.
 
-use super::{Shooter, argmax_random};
-use crate::bitboard::Bits;
+use super::Shooter;
+use super::placement::Tilt;
+use crate::bitboard::{Bits, CELLS};
 use crate::fleet::{LENGTHS, SEGMENTS, SHIPS, Ship, THROUGH};
 use crate::game::{Knowledge, Outcome};
 use crate::posterior::Posterior;
 use crate::rng::Rng;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Search {
@@ -32,6 +34,8 @@ pub struct Search {
 pub struct Broadside {
     pub threads: usize,
     pub search: Search,
+    /// Expected placement habits of the opponent (None = uniform).
+    pub prior: Option<Arc<Tilt>>,
 }
 
 impl Broadside {
@@ -44,6 +48,7 @@ impl Broadside {
                 samples: 48,
                 exact_limit: 400,
             },
+            prior: None,
         }
     }
 
@@ -80,19 +85,55 @@ pub fn occupied_outcomes(k: &Knowledge, cell: usize) -> Vec<Outcome> {
     out
 }
 
-/// Plain greedy choice: the most likely cell, ties broken at random.
-pub fn greedy_choice(k: &Knowledge, p: &Posterior, rng: &mut Rng) -> usize {
-    argmax_random(k.unknown().0, rng, |c| p.cells[c])
+/// How much each cell is worth shooting: its probability of holding a ship.
+///
+/// Without a prior these are the exact layout counts. With one, each ship's
+/// exact placement counts are reweighted by the prior and renormalized (a
+/// product-of-experts approximation: exact constraints, approximate prior).
+pub fn cell_scores(p: &Posterior, prior: Option<&Tilt>) -> [f64; CELLS] {
+    let Some(t) = prior else {
+        return p.cells.map(|c| c as f64);
+    };
+    let mut out = [0.0; CELLS];
+    for (ship, &len) in LENGTHS.iter().enumerate() {
+        let w = &p.ships[ship];
+        let z: f64 = (0..w.len())
+            .map(|slot| w[slot] as f64 * t.weight[ship][slot])
+            .sum();
+        if z == 0.0 {
+            continue;
+        }
+        for slot in (0..w.len()).filter(|&slot| w[slot] > 0) {
+            let v = w[slot] as f64 * t.weight[ship][slot] / z;
+            for c in Bits(SEGMENTS[len][slot]) {
+                out[c] += v;
+            }
+        }
+    }
+    out
 }
 
-/// Greedy with a fixed tie-break (lowest cell). Rollouts need a deterministic
-/// base policy: with random ties each evaluation is a noisy draw, and picking
-/// the best of several noisy estimates selects noise, not better shots.
-pub fn greedy_det(k: &Knowledge, p: &Posterior) -> usize {
-    let mut best = (0, usize::MAX);
+/// Highest-scoring unshot cell, ties broken at random.
+pub fn best_random(k: &Knowledge, scores: &[f64; CELLS], rng: &mut Rng) -> usize {
+    let mut best = (f64::NEG_INFINITY, 0u128);
     for c in Bits(k.unknown().0) {
-        if p.cells[c] > best.0 || best.1 == usize::MAX {
-            best = (p.cells[c], c);
+        if scores[c] > best.0 {
+            best = (scores[c], 1 << c);
+        } else if scores[c] == best.0 {
+            best.1 |= 1 << c;
+        }
+    }
+    rng.pick_bit(best.1)
+}
+
+/// Highest-scoring unshot cell, ties to the lowest cell. Rollouts need a
+/// deterministic base policy: with random ties each evaluation is a noisy
+/// draw, and picking the best of several noisy estimates selects noise.
+pub fn best_det(k: &Knowledge, scores: &[f64; CELLS]) -> usize {
+    let mut best = (f64::NEG_INFINITY, usize::MAX);
+    for c in Bits(k.unknown().0) {
+        if scores[c] > best.0 {
+            best = (scores[c], c);
         }
     }
     best.1
@@ -100,7 +141,7 @@ pub fn greedy_det(k: &Knowledge, p: &Posterior) -> usize {
 
 /// Shots to finish the game from `k`, firing `first` and then greedily,
 /// when the afloat ships truly lie at `truth` (slot per ship).
-fn rollout(k: &Knowledge, first: usize, truth: &[Option<u8>; SHIPS]) -> u32 {
+fn rollout(k: &Knowledge, first: usize, truth: &[Option<u8>; SHIPS], prior: Option<&Tilt>) -> u32 {
     let ships: Vec<(usize, u128)> = (0..SHIPS)
         .filter_map(|s| truth[s].map(|slot| (s, SEGMENTS[LENGTHS[s]][slot as usize])))
         .collect();
@@ -118,47 +159,57 @@ fn rollout(k: &Knowledge, first: usize, truth: &[Option<u8>; SHIPS]) -> u32 {
         if k.won() {
             return shots;
         }
-        cell = greedy_det(&k, &Posterior::compute(&k));
+        cell = best_det(&k, &cell_scores(&Posterior::compute(&k), prior));
     }
 }
 
 impl Broadside {
-    fn search(&self, k: &Knowledge, p: &Posterior, rng: &mut Rng) -> usize {
+    fn search(&self, k: &Knowledge, scores: &[f64; CELLS], rng: &mut Rng) -> usize {
+        let prior = self.prior.as_deref();
         let unknown = k.unknown().0;
         let mut cands: Vec<usize> = Bits(unknown).collect();
-        cands.sort_by_key(|&c| std::cmp::Reverse(p.cells[c]));
+        // Stable sort: ties keep the lowest cell first, matching `best_det`.
+        cands.sort_by(|&a, &b| scores[b].total_cmp(&scores[a]));
         cands.truncate(self.search.candidates);
 
         // The futures to evaluate against: (afloat placements, weight).
         // Enumerate them exactly when there are few enough, else sample.
         let enumerated = Posterior::enumerate_afloat(k, self.search.exact_limit);
         let exact = enumerated.is_some();
-        let futures: Vec<([Option<u8>; SHIPS], u64)> = enumerated.unwrap_or_else(|| {
-            (0..self.search.samples)
-                .map(|_| (Posterior::sample_afloat(k, rng), 1))
-                .collect()
-        });
+        let futures: Vec<([Option<u8>; SHIPS], f64)> = match enumerated {
+            Some(f) => f.into_iter().map(|(t, w)| (t, w as f64)).collect(),
+            None => (0..self.search.samples)
+                .map(|_| (Posterior::sample_afloat(k, rng), 1.0))
+                .collect(),
+        };
+        // Under a prior, each future also carries its placements' prior weight.
+        let futures: Vec<_> = futures
+            .into_iter()
+            .map(|(t, w)| {
+                let pw: f64 = prior.map_or(1.0, |pr| {
+                    (0..SHIPS)
+                        .filter_map(|s| t[s].map(|slot| pr.weight[s][slot as usize]))
+                        .product()
+                });
+                (t, w * pw)
+            })
+            .collect();
 
         // cands[0] is the base policy's own move (most likely, lowest cell).
         let base: Vec<f64> = futures
             .iter()
-            .map(|(t, _)| rollout(k, cands[0], t) as f64)
+            .map(|(t, _)| rollout(k, cands[0], t, prior) as f64)
             .collect();
-        let total_w: f64 = futures.iter().map(|(_, w)| *w as f64).sum();
+        let total_w: f64 = futures.iter().map(|(_, w)| w).sum();
         let mut best = (0.0, cands[0]); // (expected shots saved vs base, cell)
         for &x in &cands[1..] {
             // Paired differences against the base move, same futures.
             let d: Vec<f64> = futures
                 .iter()
                 .zip(&base)
-                .map(|((t, _), b)| b - rollout(k, x, t) as f64)
+                .map(|((t, _), b)| b - rollout(k, x, t, prior) as f64)
                 .collect();
-            let mean = d
-                .iter()
-                .zip(&futures)
-                .map(|(d, (_, w))| d * *w as f64)
-                .sum::<f64>()
-                / total_w;
+            let mean = d.iter().zip(&futures).map(|(d, (_, w))| d * w).sum::<f64>() / total_w;
             // Sampled futures are noisy: only leave the base move for a
             // significant gain, or the search just chases sampling noise.
             let margin = if exact {
@@ -192,10 +243,11 @@ impl Shooter for Broadside {
         if let Some(c) = Bits(unknown).find(|&c| p.cells[c] == p.layouts) {
             return c;
         }
+        let scores = cell_scores(&p, self.prior.as_deref());
         if (k.afloat_mask().count_ones() as usize) <= self.search.max_afloat {
-            return self.search(k, &p, rng);
+            return self.search(k, &scores, rng);
         }
-        greedy_choice(k, &p, rng)
+        best_random(k, &scores, rng)
     }
 }
 

@@ -59,26 +59,6 @@ impl Placer for SpacedPlacer {
     }
 }
 
-/// Uniformly random cell among the `unknown` cells that maximize `score`.
-pub(crate) fn argmax_random(
-    unknown: u128,
-    rng: &mut Rng,
-    mut score: impl FnMut(usize) -> u64,
-) -> usize {
-    let mut best = 0u64;
-    let mut ties = 0u128;
-    for c in crate::bitboard::Bits(unknown) {
-        let s = score(c);
-        if s > best || ties == 0 {
-            best = s;
-            ties = 1 << c;
-        } else if s == best {
-            ties |= 1 << c;
-        }
-    }
-    rng.pick_bit(ties)
-}
-
 pub const SHOOTERS: &[&str] = &[
     "broadside",
     "greedy",
@@ -87,9 +67,31 @@ pub const SHOOTERS: &[&str] = &[
     "hunt-target",
     "random",
 ];
-pub const PLACERS: &[&str] = &["uniform", "spaced", "tiltA (e.g. tilt1, tilt1.5)"];
+pub const PLACERS: &[&str] = &[
+    "broadside",
+    "uniform",
+    "spaced",
+    "tiltA (e.g. tilt1.5)",
+    "mix:A=P,A=P,...",
+];
 
 pub fn shooter(name: &str) -> Option<Box<dyn Shooter>> {
+    // NAME@tiltA: the shooter expects its opponent to place like `tiltA`.
+    if let Some((base, alpha)) = name.split_once("@tilt") {
+        let prior = Some(placement::fitted(alpha.parse().ok()?));
+        return Some(match base {
+            "density" => Box::new(baseline::Density { prior }),
+            "greedy" => Box::new(engine::Broadside {
+                prior,
+                ..engine::Broadside::greedy()
+            }),
+            "broadside" => Box::new(engine::Broadside {
+                prior,
+                ..engine::Broadside::new()
+            }),
+            _ => return None,
+        });
+    }
     Some(match name {
         "broadside" => Box::new(engine::Broadside::new()),
         "greedy" => Box::new(engine::Broadside::greedy()),
@@ -119,13 +121,6 @@ pub fn shooter(name: &str) -> Option<Box<dyn Shooter>> {
             })
         }
         "density" => Box::new(baseline::Density::default()),
-        // density@tiltA: density that expects a tilt-A placer.
-        n if n.starts_with("density@tilt") => {
-            let alpha: f64 = n["density@tilt".len()..].parse().ok()?;
-            Box::new(baseline::Density {
-                prior: Some(placement::fitted(alpha)),
-            })
-        }
         "parity" => Box::new(baseline::HuntTarget { parity: true }),
         "hunt-target" => Box::new(baseline::HuntTarget { parity: false }),
         "random" => Box::new(baseline::RandomShooter),
@@ -137,6 +132,17 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
     Some(match name {
         "uniform" => Box::new(UniformPlacer),
         "spaced" => Box::new(SpacedPlacer),
+        "broadside" => Box::new(placement::MixedPlacer::equilibrium()),
+        n if n.starts_with("mix:") => {
+            let parts: Vec<(f64, f64)> = n[4..]
+                .split(',')
+                .map(|kv| {
+                    let (a, p) = kv.split_once('=')?;
+                    Some((a.parse().ok()?, p.parse().ok()?))
+                })
+                .collect::<Option<_>>()?;
+            Box::new(placement::MixedPlacer::new(&parts))
+        }
         n if n.starts_with("tilt") => Box::new(placement::TiltedPlacer::new(n[4..].parse().ok()?)),
         _ => return None,
     })

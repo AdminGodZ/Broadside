@@ -20,7 +20,8 @@ Commands:
   sim     Shots-to-win statistics of a shooter vs a placer
             --shooter NAME (broadside)  --placer NAME (uniform)
   duel    Head-to-head win rate: duel A B [--placer-a P] [--placer-b P]
-  matrix  Placement game: placer tilt vs shooter's assumed tilt (--alphas, --games)
+  matrix  Placement game: placer tilt vs shooter's assumed tilt
+            --alphas 0,1,2  --base density|greedy|broadside
   bench   Time the exact posterior on the empty board
   count   Count every legal fleet layout (multithreaded brute force)
 
@@ -268,6 +269,8 @@ fn cmd_matrix(o: &Opts) -> Result<(), String> {
     let games = o.get("games", 20000u64)?;
     let seed = o.get("seed", random_seed())?;
     let threads = o.get("threads", threads())?;
+    let base = o.str("base", "density");
+    check_shooter(&format!("{base}@tilt1"))?;
     print!("placer \\ shooter");
     for b in &alphas {
         print!("{:>9}", format!("@{b}"));
@@ -278,7 +281,7 @@ fn cmd_matrix(o: &Opts) -> Result<(), String> {
         let placer = format!("tilt{a}");
         print!("{placer:<16}");
         for (j, b) in alphas.iter().enumerate() {
-            let sh = format!("density@tilt{b}");
+            let sh = format!("{base}@tilt{b}");
             let s = sim::benchmark(
                 &|| ai::shooter(&sh).unwrap(),
                 &|| ai::placer(&placer).unwrap(),
@@ -296,7 +299,7 @@ fn cmd_matrix(o: &Opts) -> Result<(), String> {
             m[i].iter().cloned().fold(f64::INFINITY, f64::min)
         );
     }
-    println!("density shooter, {games} games per cell, seed {seed}");
+    println!("{base} shooter, {games} games per cell, seed {seed}");
     let (placer_mix, shooter_mix, value) = solve_game(&m, 200_000);
     let fmt = |mix: &[f64]| {
         alphas
@@ -364,7 +367,7 @@ fn run() -> Result<(), String> {
         Some("play") => ui::play(
             o.get("seed", random_seed())?,
             &o.str("shooter", "broadside"),
-            &o.str("placer", "uniform"),
+            &o.str("placer", "broadside"),
             o.flags.contains_key("heat"),
         ),
         Some("assist") => ui::assist(

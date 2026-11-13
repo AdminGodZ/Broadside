@@ -124,6 +124,51 @@ impl Placer for TiltedPlacer {
     }
 }
 
+/// Picks a tilt at random each game: a mixed strategy in the placement game.
+pub struct MixedPlacer {
+    parts: Vec<(f64, f64, Arc<Tilt>)>, // (alpha, cumulative probability, tilt)
+}
+
+impl MixedPlacer {
+    /// `parts`: (alpha, probability) pairs; probabilities are normalized.
+    pub fn new(parts: &[(f64, f64)]) -> Self {
+        let total: f64 = parts.iter().map(|p| p.1).sum();
+        let mut acc = 0.0;
+        let parts = parts
+            .iter()
+            .map(|&(a, p)| {
+                acc += p / total;
+                (a, acc, fitted(a))
+            })
+            .collect();
+        Self { parts }
+    }
+
+    /// Equilibrium of the measured placement game (`broadside matrix`,
+    /// 11 tilts x 11 expectations, 20k games per cell): no shooter in that
+    /// family needs fewer than ~44.9 shots against it, versus 44.5 for
+    /// uniform placement, while naive shooters need ~45.7.
+    pub fn equilibrium() -> Self {
+        Self::new(&[(0.0, 0.72), (1.0, 0.22), (3.0, 0.06)])
+    }
+}
+
+impl Placer for MixedPlacer {
+    fn name(&self) -> String {
+        let parts: Vec<String> = self.parts.iter().map(|p| p.0.to_string()).collect();
+        format!("mix({})", parts.join(","))
+    }
+    fn place(&mut self, rng: &mut Rng) -> Layout {
+        let r = rng.f64();
+        let i = self
+            .parts
+            .iter()
+            .position(|p| r < p.1)
+            .unwrap_or(self.parts.len() - 1);
+        self.parts[i].2.sample(rng)
+    }
+}
+
 /// Cell occupancy of a placer, estimated from `n` samples.
 pub fn occupancy(placer: &mut dyn Placer, n: usize, rng: &mut Rng) -> [f64; CELLS] {
     let mut occ = [0u64; CELLS];
