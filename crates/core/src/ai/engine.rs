@@ -146,14 +146,26 @@ impl Broadside {
                 .collect()
         };
 
-        let mut best = (f64::INFINITY, cands[0]);
-        for &x in &cands {
-            let mut total = 0.0;
-            for (truth, w) in &futures {
-                total += rollout(k, x, truth) as f64 * *w as f64;
-            }
-            if total < best.0 - 1e-9 {
-                best = (total, x);
+        // cands[0] is the base policy's own move (most likely, lowest cell).
+        let base: Vec<f64> = futures.iter().map(|(t, _)| rollout(k, cands[0], t) as f64).collect();
+        let exact = afloat.len() == 1;
+        let total_w: f64 = futures.iter().map(|(_, w)| *w as f64).sum();
+        let mut best = (0.0, cands[0]); // (expected shots saved vs base, cell)
+        for &x in &cands[1..] {
+            // Paired differences against the base move, same futures.
+            let d: Vec<f64> = futures.iter().zip(&base).map(|((t, _), b)| b - rollout(k, x, t) as f64).collect();
+            let mean = d.iter().zip(&futures).map(|(d, (_, w))| d * *w as f64).sum::<f64>() / total_w;
+            // Sampled futures are noisy: only leave the base move for a
+            // significant gain, or the search just chases sampling noise.
+            let margin = if exact {
+                1e-9
+            } else {
+                let n = d.len() as f64;
+                let var = d.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0);
+                2.0 * (var / n).sqrt() + 1e-9
+            };
+            if mean > margin && mean > best.0 {
+                best = (mean, x);
             }
         }
         best.1
