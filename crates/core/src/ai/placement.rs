@@ -13,6 +13,7 @@ use crate::fleet::{FLEET_CELLS, LENGTHS, SEGMENTS, SHIPS, SLOTS};
 use crate::game::{Knowledge, Layout};
 use crate::posterior::Posterior;
 use crate::rng::Rng;
+use crate::symmetry::CELL_MAP;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -63,29 +64,47 @@ impl Tilt {
         }
     }
 
+    /// Target occupancy of tilt `alpha`: `u^(1-alpha)`, scaled to 17 ship cells.
+    pub fn target_occupancy(alpha: f64) -> [f64; CELLS] {
+        let p = Posterior::cached(&Knowledge::new(), 1);
+        let raw: Vec<f64> = (0..CELLS).map(|c| p.prob(c).powf(1.0 - alpha)).collect();
+        let scale = FLEET_CELLS as f64 / raw.iter().sum::<f64>();
+        let mut out = [0.0; CELLS];
+        for (o, r) in out.iter_mut().zip(raw) {
+            *o = (r * scale).min(0.999);
+        }
+        out
+    }
+
     /// Fits θ by iterative proportional scaling on sampled occupancies.
     pub fn fit(alpha: f64, rounds: usize, samples: usize, seed: u64) -> Self {
-        let p = Posterior::cached(&Knowledge::new(), 1);
-        let u: Vec<f64> = (0..CELLS).map(|c| p.prob(c)).collect();
-        let raw: Vec<f64> = u.iter().map(|x| x.powf(1.0 - alpha)).collect();
-        let scale = FLEET_CELLS as f64 / raw.iter().sum::<f64>();
-        let target: Vec<f64> = raw.iter().map(|x| x * scale).collect();
+        let target = Self::target_occupancy(alpha);
 
         let mut rng = Rng::new(seed);
         let mut tilt = Self::from_theta([0.0; CELLS]);
-        for _ in 0..rounds {
+        for round in 0..rounds {
             let mut occ = [0u64; CELLS];
             for _ in 0..samples {
                 for c in Bits(tilt.sample(&mut rng).occupied().0) {
                     occ[c] += 1;
                 }
             }
+            // Damped steps: raising one cell's weight also fills its
+            // neighbours (ships are long), so full steps overshoot and oscillate.
+            let step = if round < rounds / 2 { 0.5 } else { 0.25 };
             let mut theta = tilt.theta;
             for c in 0..CELLS {
                 let m = (occ[c] as f64 + 0.5) / samples as f64;
-                theta[c] += 0.8 * (target[c] / m).ln();
+                theta[c] += step * (target[c] / m).ln();
             }
-            tilt = Self::from_theta(theta);
+            // The target is symmetric, so the answer is: averaging over the
+            // board's symmetries cancels sampling noise and asymmetric drift.
+            let mut sym = [0.0; CELLS];
+            for (c, v) in sym.iter_mut().enumerate() {
+                *v = CELL_MAP.iter().map(|m| theta[m[c] as usize]).sum::<f64>()
+                    / CELL_MAP.len() as f64;
+            }
+            tilt = Self::from_theta(sym);
         }
         tilt
     }

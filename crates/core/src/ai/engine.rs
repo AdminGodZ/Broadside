@@ -41,16 +41,111 @@ pub struct Broadside {
     pub learner: Option<Learner>,
 }
 
-/// Cell occupancy of the opponent layouts seen so far.
+/// Learns the opponent's placement habits by model selection.
+///
+/// Candidates: uniform placement, the tilt family, and free per-cell
+/// occupancy shrunk toward uniform by various amounts. Before each revealed
+/// layout is counted, every candidate predicts each cell's occupancy and is
+/// scored by log-likelihood (prequential scoring), so a model only wins by
+/// predicting unseen layouts better. Against a uniform placer, uniform wins and
+/// nothing is lost to noise.
 #[derive(Clone, Default)]
 pub struct Learner {
     seen: Vec<u32>,
     games: u32,
+    scores: Vec<f64>,
+    targets: Vec<[f64; CELLS]>,
 }
 
-/// Pseudo-games of uniform placement mixed into the learned occupancy, so a
-/// few odd layouts do not swing the prior.
-const LEARN_PSEUDO_GAMES: f64 = 30.0;
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Model {
+    Tilt(f64),
+    PerCell(f64),
+}
+
+const MODELS: [Model; 15] = [
+    Model::Tilt(0.0),
+    Model::Tilt(0.25),
+    Model::Tilt(0.5),
+    Model::Tilt(0.75),
+    Model::Tilt(1.0),
+    Model::Tilt(1.25),
+    Model::Tilt(1.5),
+    Model::Tilt(1.75),
+    Model::Tilt(2.0),
+    Model::Tilt(2.5),
+    Model::Tilt(3.0),
+    Model::PerCell(10.0),
+    Model::PerCell(30.0),
+    Model::PerCell(100.0),
+    Model::PerCell(300.0),
+];
+
+impl Learner {
+    fn predict(&self, i: usize, u: &Posterior) -> [f64; CELLS] {
+        match MODELS[i] {
+            Model::Tilt(_) => self.targets[i],
+            Model::PerCell(k) => {
+                let n = self.games as f64;
+                let mut out = [0.0; CELLS];
+                for (c, o) in out.iter_mut().enumerate() {
+                    *o = (self.seen[c] as f64 + k * u.prob(c)) / (n + k);
+                }
+                out
+            }
+        }
+    }
+
+    /// Scores every model on `layout`, then adds it; returns the best prior.
+    fn observe(&mut self, layout: &crate::game::Layout) -> Option<Arc<Tilt>> {
+        let u = Posterior::cached(&Knowledge::new(), 1);
+        if self.seen.is_empty() {
+            self.seen = vec![0; CELLS];
+            self.scores = vec![0.0; MODELS.len()];
+            self.targets = MODELS
+                .iter()
+                .map(|m| match *m {
+                    Model::Tilt(a) => Tilt::target_occupancy(a),
+                    Model::PerCell(_) => [0.0; CELLS],
+                })
+                .collect();
+        }
+        let occupied = layout.occupied();
+        for i in 0..MODELS.len() {
+            let p = self.predict(i, &u);
+            self.scores[i] += (0..CELLS)
+                .map(|c| {
+                    let q = p[c].clamp(1e-3, 1.0 - 1e-3);
+                    if occupied.has(c) {
+                        q.ln()
+                    } else {
+                        (1.0 - q).ln()
+                    }
+                })
+                .sum::<f64>();
+        }
+        for c in Bits(occupied.0) {
+            self.seen[c] += 1;
+        }
+        self.games += 1;
+
+        let best = (0..MODELS.len())
+            .max_by(|&a, &b| self.scores[a].total_cmp(&self.scores[b]).then(b.cmp(&a)))?;
+        match MODELS[best] {
+            Model::Tilt(0.0) => None,
+            Model::Tilt(a) => Some(super::placement::fitted(a)),
+            Model::PerCell(_) => {
+                // First-order tilt: occupancy scales with e^theta.
+                let p = self.predict(best, &u);
+                let mut theta = [0.0; CELLS];
+                for (c, t) in theta.iter_mut().enumerate() {
+                    *t = (p[c] / u.prob(c)).ln();
+                }
+                Some(Arc::new(Tilt::from_theta(theta)))
+            }
+        }
+    }
+}
 
 impl Broadside {
     pub fn new() -> Self {
@@ -244,25 +339,9 @@ impl Broadside {
 
 impl Shooter for Broadside {
     fn learn(&mut self, layout: &crate::game::Layout) {
-        let Some(l) = self.learner.as_mut() else {
-            return;
-        };
-        l.seen.resize(CELLS, 0);
-        for c in Bits(layout.occupied().0) {
-            l.seen[c] += 1;
+        if let Some(l) = self.learner.as_mut() {
+            self.prior = l.observe(layout);
         }
-        l.games += 1;
-        // Occupancy shrunk toward uniform placement, then a first-order tilt:
-        // occupancy scales with e^theta.
-        let u = &Posterior::cached(&Knowledge::new(), 1);
-        let (n, k) = (l.games as f64, LEARN_PSEUDO_GAMES);
-        let mut theta = [0.0; CELLS];
-        for (c, t) in theta.iter_mut().enumerate() {
-            let base = u.prob(c);
-            let occ = (l.seen[c] as f64 + k * base) / (n + k);
-            *t = (occ / base).ln();
-        }
-        self.prior = Some(Arc::new(Tilt::from_theta(theta)));
     }
 
     fn name(&self) -> String {
@@ -331,5 +410,22 @@ mod tests {
                 assert_eq!(total, p.cells[x], "cell {x} in {k:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod learner_tests {
+    use super::*;
+    use crate::game::Layout;
+
+    #[test]
+    fn learner_keeps_uniform_prior_against_uniform_placement() {
+        let mut l = Learner::default();
+        let mut rng = Rng::new(17);
+        let mut prior = None;
+        for _ in 0..80 {
+            prior = l.observe(&Layout::random(&mut rng));
+        }
+        assert!(prior.is_none(), "picked a non-uniform model against uniform layouts");
     }
 }
