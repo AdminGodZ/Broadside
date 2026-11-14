@@ -741,9 +741,10 @@ mod tests {
             let (mut y, mut z) = (vec![0u32; n], vec![0u32; n]);
             let mut tree = Tree::new(&w, cfg(0, 0));
             for x in Bits(k.unknown().0).take(12) {
+                let mut seen = Default::default();
                 let by_rollout: f64 = lists
                     .iter()
-                    .map(|(t, layouts)| *layouts as f64 * rollout(&k, x, t, None) as f64)
+                    .map(|(t, n)| *n as f64 * rollout(&k, x, t, None, &mut seen) as f64)
                     .sum();
                 let cuts = tree.split(x, k.hits.0, &idx, &mut y);
                 let mut by_tree: f64 = w.iter().map(|w| w.weight).sum();

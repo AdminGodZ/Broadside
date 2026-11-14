@@ -216,28 +216,52 @@ impl Posterior {
         Some(out)
     }
 
-    /// Draws placements for every ship still afloat, exactly from the
-    /// posterior (one conditional computation per ship). Index by ship.
-    pub fn sample_afloat(k: &Knowledge, rng: &mut crate::rng::Rng) -> [Option<u8>; SHIPS] {
-        let mut fixed: Vec<(usize, u8)> = Vec::new();
-        let mut out = [None; SHIPS];
-        for ship in Bits(k.afloat_mask() as u128) {
-            let p = Self::compute_fixed(k, &fixed, 1);
-            let w = &p.ships[ship];
-            let mut r = rng.below(p.layouts);
-            let slot = w.iter().position(|&x| {
-                if r < x {
-                    true
-                } else {
-                    r -= x;
-                    false
+    /// `n` independent draws of placements for the ships still afloat,
+    /// exactly from the posterior. `self` must be the posterior of `k`.
+    /// Ships are drawn one at a time, each given the ones before it. Index
+    /// by ship.
+    pub fn sample_afloat(
+        &self,
+        k: &Knowledge,
+        n: usize,
+        rng: &mut crate::rng::Rng,
+    ) -> Vec<[Option<u8>; SHIPS]> {
+        let ships: Vec<usize> = Bits(k.afloat_mask() as u128).collect();
+        // The second ship's odds depend on the first ship's slot alone, and
+        // they are the costliest to count: keep them across draws.
+        let mut second: HashMap<u8, Posterior> = HashMap::new();
+        (0..n)
+            .map(|_| {
+                let mut fixed: Vec<(usize, u8)> = Vec::new();
+                let mut out = [None; SHIPS];
+                for (depth, &ship) in ships.iter().enumerate() {
+                    let deeper;
+                    let p = match depth {
+                        0 => self,
+                        1 => second
+                            .entry(fixed[0].1)
+                            .or_insert_with(|| Self::compute_fixed(k, &fixed, 1)),
+                        _ => {
+                            deeper = Self::compute_fixed(k, &fixed, 1);
+                            &deeper
+                        }
+                    };
+                    let mut r = rng.below(p.layouts);
+                    let slot = p.ships[ship].iter().position(|&x| {
+                        if r < x {
+                            true
+                        } else {
+                            r -= x;
+                            false
+                        }
+                    });
+                    let slot = slot.expect("weights of each ship sum to the layout count") as u8;
+                    fixed.push((ship, slot));
+                    out[ship] = Some(slot);
                 }
-            });
-            let slot = slot.expect("weights of each ship sum to the layout count") as u8;
-            fixed.push((ship, slot));
-            out[ship] = Some(slot);
-        }
-        out
+                out
+            })
+            .collect()
     }
 
     /// `[s][cell]`: consistent layouts with ship `s` on `cell`.
@@ -935,6 +959,34 @@ mod tests {
             }
             for s in (0..SHIPS).filter(|&s| k.sunk[s].is_none()) {
                 assert_eq!(ships[s], p.ships[s]);
+            }
+            checked += 1;
+        }
+    }
+
+    #[test]
+    fn samples_follow_the_posterior() {
+        let mut rng = Rng::new(33);
+        let mut checked = 0;
+        while checked < 5 {
+            let shots = 60 + rng.below(20) as usize;
+            let k = random_state(&mut rng, shots);
+            let p = Posterior::compute(&k);
+            let Some(f) = p.enumerate_afloat(&k, 40) else {
+                continue;
+            };
+            if k.won() || f.len() < 2 {
+                continue;
+            }
+            let n = 20_000;
+            let mut seen = vec![0u64; f.len()];
+            for t in p.sample_afloat(&k, n, &mut rng) {
+                let i = f.iter().position(|(u, _)| *u == t).expect("in the support");
+                seen[i] += 1;
+            }
+            for ((_, layouts), &count) in f.iter().zip(&seen) {
+                let expect = *layouts as f64 / p.layouts as f64;
+                assert!((count as f64 / n as f64 - expect).abs() < 0.02, "{k:?}");
             }
             checked += 1;
         }

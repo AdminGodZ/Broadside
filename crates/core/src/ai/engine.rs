@@ -17,6 +17,7 @@ use crate::fleet::{LENGTHS, SEGMENTS, SHIPS, Ship, THROUGH};
 use crate::game::{Knowledge, Outcome};
 use crate::posterior::Posterior;
 use crate::rng::Rng;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
@@ -307,6 +308,11 @@ fn base_move(k: &Knowledge, p: &Posterior, prior: Option<&Tilt>) -> usize {
     best_det(pool, &cell_scores(p, prior, k))
 }
 
+/// The base policy's shot per position. Rollouts from one decision keep
+/// meeting the same positions: before their layouts tell them apart, and
+/// where two lines fire the same shots in a different order.
+pub(crate) type BaseMoves = HashMap<Knowledge, usize>;
+
 /// Shots to finish the game from `k`, firing `first` and then following the
 /// base policy, when the afloat ships truly lie at `truth` (slot per ship).
 pub(crate) fn rollout(
@@ -314,6 +320,7 @@ pub(crate) fn rollout(
     first: usize,
     truth: &[Option<u8>; SHIPS],
     prior: Option<&Tilt>,
+    seen: &mut BaseMoves,
 ) -> u32 {
     let ships: Vec<(usize, u128)> = (0..SHIPS)
         .filter_map(|s| truth[s].map(|slot| (s, SEGMENTS[LENGTHS[s]][slot as usize])))
@@ -332,7 +339,9 @@ pub(crate) fn rollout(
         if k.won() {
             return shots;
         }
-        cell = base_move(&k, &Posterior::compute(&k), prior);
+        cell = *seen
+            .entry(k)
+            .or_insert_with(|| base_move(&k, &Posterior::cached(&k, 1), prior));
     }
 }
 
@@ -340,12 +349,16 @@ impl Broadside {
     /// Rollout search against layouts sampled from the posterior, for
     /// positions with too many placements to list. `cands`: cells to compare,
     /// the base policy's own move first.
-    fn sampled_search(&self, k: &Knowledge, cands: &[usize], rng: &mut Rng) -> usize {
+    fn sampled_search(
+        &self,
+        k: &Knowledge,
+        p: &Posterior,
+        cands: &[usize],
+        rng: &mut Rng,
+    ) -> usize {
         let prior = self.prior.as_deref();
         let unknown = k.unknown().0;
-        let futures: Vec<[Option<u8>; SHIPS]> = (0..self.search.samples)
-            .map(|_| Posterior::sample_afloat(k, rng))
-            .collect();
+        let futures = p.sample_afloat(k, self.search.samples, rng);
         // The samples follow the uniform posterior. Under a prior each
         // counts by its prior weight, which only its unshot cells set apart.
         let logs: Vec<f64> = futures
@@ -361,9 +374,10 @@ impl Broadside {
         let w: Vec<f64> = logs.iter().map(|l| (l - top).exp()).collect();
         let (n, total) = (w.len() as f64, w.iter().sum::<f64>());
 
+        let mut seen = BaseMoves::new();
         let base: Vec<f64> = futures
             .iter()
-            .map(|t| rollout(k, cands[0], t, prior) as f64)
+            .map(|t| rollout(k, cands[0], t, prior, &mut seen) as f64)
             .collect();
         let mut best = (0.0, cands[0]); // (expected shots saved vs base, cell)
         for &x in &cands[1..] {
@@ -371,7 +385,7 @@ impl Broadside {
             let d: Vec<f64> = futures
                 .iter()
                 .zip(&base)
-                .map(|(t, b)| b - rollout(k, x, t, prior) as f64)
+                .map(|(t, b)| b - rollout(k, x, t, prior, &mut seen) as f64)
                 .collect();
             let mean = d.iter().zip(&w).map(|(d, w)| d * w).sum::<f64>() / total;
             // Sampled futures are noisy: only leave the base move for a
@@ -432,7 +446,7 @@ impl Shooter for Broadside {
             cands.truncate(s.candidates.max(1));
             // Its own random stream: how many samples it draws must not
             // shift the tie-breaks of later moves.
-            return self.sampled_search(k, &cands, &mut Rng::new(rng.next_u64()));
+            return self.sampled_search(k, &p, &cands, &mut Rng::new(rng.next_u64()));
         }
         best_random(pool, &scores, rng)
     }
