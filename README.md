@@ -40,7 +40,7 @@ Tests: `cargo test`, slow ones with `cargo test --release -- --ignored`.
   pairs). The empty board, all 30 billion layouts with exact cell marginals, takes ~45 ms on
   one core. Early positions are cached up to board symmetry.
 - **Shooting.** Fire at the most likely cell until the afloat ships have few enough joint
-  placements to list (30,000 by default, which covers every position with two ships left).
+  placements to list (200,000 by default; every position with two ships left has fewer than 30,000).
   From there the engine searches. Each listed placement is a possible world, and a later
   position is just the subset of worlds that agree with the shots since, so whole lines of
   play are evaluated by splitting lists, with no further inference. The likeliest shots are
