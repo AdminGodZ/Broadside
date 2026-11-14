@@ -66,6 +66,24 @@ impl Layout {
             .fold(Bitboard::EMPTY, |acc, &s| acc | self.ship(s))
     }
 
+    /// How close the ships come: 0 if they all lie apart, 1 if some meet
+    /// at a corner but none share an edge, 2 if some share an edge.
+    pub fn contact(&self) -> usize {
+        let mut kind = 0;
+        for (i, &a) in FLEET.iter().enumerate() {
+            for &b in &FLEET[..i] {
+                let (a, b) = (self.ship(a).0, self.ship(b).0);
+                if crate::bitboard::neighbours4(a) & b != 0 {
+                    return 2;
+                }
+                if crate::bitboard::grow8(a) & b != 0 {
+                    kind = 1;
+                }
+            }
+        }
+        kind
+    }
+
     pub fn ship_at(&self, cell: usize) -> Option<Ship> {
         FLEET.into_iter().find(|&s| self.ship(s).has(cell))
     }

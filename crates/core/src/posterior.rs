@@ -18,7 +18,7 @@
 //! Counts per (ship, placement) fall out of the loops for free, and cell
 //! probabilities follow from those.
 
-use crate::bitboard::{Bits, CELLS, SIZE};
+use crate::bitboard::{Bits, CELLS, SIZE, grow8, neighbours4};
 use crate::fleet::{LENGTHS, SEGMENTS, SHIPS, SLOTS, THROUGH, starts};
 use crate::game::Knowledge;
 use crate::symmetry::{self, CELL_MAP, SLOT_MAP};
@@ -26,15 +26,56 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
+/// Layouts of an empty board per spacing (`empty_board_counts_every_layout`).
+const TOTAL_FREE: u64 = 30_093_975_536;
+const TOTAL_NO_EDGES: u64 = 5_797_542_752;
+const TOTAL_APART: u64 = 3_851_502_784;
+
 /// Positions worth caching: early ones, which recur across games and are the
 /// slowest to count.
 const CACHE_MIN_LAYOUTS: u64 = 100_000_000;
 const CACHE_MAX_SHOTS: u32 = 24;
 const CACHE_CAPACITY: usize = 10_000;
 
-fn cache() -> &'static Mutex<HashMap<Knowledge, Arc<Posterior>>> {
-    static CACHE: OnceLock<Mutex<HashMap<Knowledge, Arc<Posterior>>>> = OnceLock::new();
+type Cache = Mutex<HashMap<(Knowledge, Spacing), Arc<Posterior>>>;
+
+fn cache() -> &'static Cache {
+    static CACHE: OnceLock<Cache> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// How far apart the ships of a layout must lie for it to count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Spacing {
+    /// The rules: ships may touch.
+    Free,
+    /// No two ships share an edge (corners may meet).
+    NoEdges,
+    /// No two ships touch, not even at a corner.
+    Apart,
+}
+
+impl Spacing {
+    /// `m` and the cells around it that no other ship may use.
+    #[inline]
+    pub fn reach(self, m: u128) -> u128 {
+        match self {
+            Spacing::Free => m,
+            Spacing::NoEdges => m | neighbours4(m),
+            Spacing::Apart => grow8(m),
+        }
+    }
+}
+
+/// `Spacing::reach`, with the spacing fixed at compile time (0 = free,
+/// 1 = no edges, 2 = apart) for the counting loops.
+#[inline(always)]
+fn reach<const G: u8>(m: u128) -> u128 {
+    match G {
+        0 => m,
+        1 => m | neighbours4(m),
+        _ => grow8(m),
+    }
 }
 
 pub type Weights = [[u64; SLOTS]; SHIPS];
@@ -62,25 +103,48 @@ impl Posterior {
     /// Like `compute_with`, but shares results for early positions (up to
     /// symmetry) through a process-wide cache. Results are identical.
     pub fn cached(k: &Knowledge, threads: usize) -> Self {
+        Self::cached_spaced(k, Spacing::Free, threads)
+    }
+
+    /// Counts only the layouts that keep `gap` between their ships.
+    pub fn compute_spaced(k: &Knowledge, gap: Spacing, threads: usize) -> Self {
+        Self::count(k, &[], gap, threads)
+    }
+
+    /// `compute_spaced` through the cache.
+    pub fn cached_spaced(k: &Knowledge, gap: Spacing, threads: usize) -> Self {
         if k.shots_fired() > CACHE_MAX_SHOTS {
-            return Self::compute_with(k, threads);
+            return Self::compute_spaced(k, gap, threads);
         }
         let (canon, t) = symmetry::canonical(k);
-        let hit = cache().lock().unwrap().get(&canon).cloned();
+        let hit = cache().lock().unwrap().get(&(canon, gap)).cloned();
         let p = match hit {
             Some(p) => p,
             None => {
-                let p = Arc::new(Self::compute_with(&canon, threads));
-                if p.layouts >= CACHE_MIN_LAYOUTS {
+                let p = Arc::new(Self::compute_spaced(&canon, gap, threads));
+                // Spaced counts are smaller for the same work: scale the
+                // bar by how many layouts the spacing leaves in all.
+                let bar = (CACHE_MIN_LAYOUTS as u128 * Self::total(gap) as u128
+                    / Self::total(Spacing::Free) as u128) as u64;
+                if p.layouts >= bar {
                     let mut c = cache().lock().unwrap();
                     if c.len() < CACHE_CAPACITY {
-                        c.insert(canon, p.clone());
+                        c.insert((canon, gap), p.clone());
                     }
                 }
                 p
             }
         };
         p.untransform(t)
+    }
+
+    /// Layouts of an empty board that keep `gap` between their ships.
+    pub fn total(gap: Spacing) -> u64 {
+        match gap {
+            Spacing::Free => TOTAL_FREE,
+            Spacing::NoEdges => TOTAL_NO_EDGES,
+            Spacing::Apart => TOTAL_APART,
+        }
     }
 
     /// Maps a posterior of the image under transform `t` back to the original.
@@ -105,9 +169,14 @@ impl Posterior {
 
     /// Posterior with some ships additionally pinned to given placements.
     pub fn compute_fixed(k: &Knowledge, fixed: &[(usize, u8)], threads: usize) -> Self {
+        Self::count(k, fixed, Spacing::Free, threads)
+    }
+
+    fn count(k: &Knowledge, fixed: &[(usize, u8)], gap: Spacing, threads: usize) -> Self {
         let mut s = Solver {
             misses: k.misses.0,
             hits: k.hits.0,
+            gap,
             threads: threads.max(1),
             w: Box::new([[0; SLOTS]; SHIPS]),
         };
@@ -135,7 +204,7 @@ impl Posterior {
             })
             .collect();
         let afloat = fixed.iter().fold(k.afloat_mask(), |m, f| m & !(1 << f.0));
-        let layouts = s.sunk(&sunk, 0, afloat);
+        let layouts = s.sunk(&sunk, 0, 0, afloat);
 
         let mut cells = [0u64; CELLS];
         for (ship, w) in s.w.iter().enumerate() {
@@ -164,6 +233,17 @@ impl Posterior {
         k: &Knowledge,
         limit: usize,
     ) -> Option<Vec<([Option<u8>; SHIPS], u64)>> {
+        self.enumerate_spaced(k, limit, Spacing::Free)
+    }
+
+    /// `enumerate_afloat` over the layouts that keep `gap` between their
+    /// ships; `self` must be the posterior of `k` under the same `gap`.
+    pub fn enumerate_spaced(
+        &self,
+        k: &Knowledge,
+        limit: usize,
+        gap: Spacing,
+    ) -> Option<Vec<([Option<u8>; SHIPS], u64)>> {
         let sunk: Vec<(usize, Vec<u8>)> = (0..SHIPS)
             .filter_map(|ship| {
                 let sk = k.sunk[ship]?;
@@ -186,12 +266,13 @@ impl Posterior {
         let mut e = Enumerator {
             misses: k.misses.0,
             hits: k.hits.0,
+            gap,
             budget: limit.saturating_mul(arrangements.clamp(1, ENUM_WORK)),
             keys: Vec::new(),
         };
         // One byte per ship, first ship most significant; 0xFF = sunk.
         let none = sunk.iter().fold(0u64, |m, (s, _)| m | slot_key(*s, 0xFF));
-        if !e.sunk(&sunk, 0, k.afloat_mask(), none) {
+        if !e.sunk(&sunk, 0, 0, k.afloat_mask(), none) {
             return None;
         }
         e.keys.sort_unstable();
@@ -264,6 +345,44 @@ impl Posterior {
             .collect()
     }
 
+    /// The layouts counted here but not in `inner`, which must count a
+    /// subset of them.
+    pub fn minus(&self, inner: &Posterior) -> Posterior {
+        let mut out = self.clone();
+        out.layouts -= inner.layouts;
+        for (a, b) in out.cells.iter_mut().zip(&inner.cells) {
+            *a -= b;
+        }
+        for (a, b) in out
+            .ships
+            .iter_mut()
+            .flatten()
+            .zip(inner.ships.iter().flatten())
+        {
+            *a -= b;
+        }
+        out
+    }
+
+    /// The layouts counted here or in `other`, which must count none of
+    /// the same.
+    pub fn plus(&self, other: &Posterior) -> Posterior {
+        let mut out = self.clone();
+        out.layouts += other.layouts;
+        for (a, b) in out.cells.iter_mut().zip(&other.cells) {
+            *a += b;
+        }
+        for (a, b) in out
+            .ships
+            .iter_mut()
+            .flatten()
+            .zip(other.ships.iter().flatten())
+        {
+            *a += b;
+        }
+        out
+    }
+
     /// `[s][cell]`: consistent layouts with ship `s` on `cell`.
     pub fn ship_cells(&self) -> [[u64; CELLS]; SHIPS] {
         let mut out = [[0u64; CELLS]; SHIPS];
@@ -292,22 +411,25 @@ impl Posterior {
 struct Solver {
     misses: u128,
     hits: u128,
+    gap: Spacing,
     threads: usize,
     w: Box<Weights>,
 }
 
 impl Solver {
-    fn sunk(&mut self, list: &[(usize, Vec<u8>)], placed: u128, afloat: u8) -> u64 {
+    /// `placed`: cells of the ships placed so far; `near`: those cells and
+    /// the ones around them that the spacing keeps clear of other ships.
+    fn sunk(&mut self, list: &[(usize, Vec<u8>)], placed: u128, near: u128, afloat: u8) -> u64 {
         let Some(((ship, cands), rest)) = list.split_first() else {
-            return self.cover(placed, self.hits & !placed, afloat);
+            return self.cover(near, self.hits & !placed, afloat);
         };
         let mut z = 0;
         for &slot in cands {
             let m = SEGMENTS[LENGTHS[*ship]][slot as usize];
-            if m & placed != 0 {
+            if m & near != 0 {
                 continue;
             }
-            let c = self.sunk(rest, placed | m, afloat);
+            let c = self.sunk(rest, placed | m, near | self.gap.reach(m), afloat);
             self.w[*ship][slot as usize] += c;
             z += c;
         }
@@ -315,9 +437,9 @@ impl Solver {
     }
 
     /// Assigns the uncovered hits to afloat ships, then counts the rest.
-    fn cover(&mut self, placed: u128, uncovered: u128, afloat: u8) -> u64 {
+    fn cover(&mut self, near: u128, uncovered: u128, afloat: u8) -> u64 {
         if uncovered == 0 {
-            return self.free(!(self.misses | placed) & crate::Bitboard::FULL.0, afloat);
+            return self.free(!(self.misses | near) & crate::Bitboard::FULL.0, afloat);
         }
         // Prune: the afloat ships must have room for every uncovered hit,
         // and each keeps at least one cell unhit.
@@ -326,7 +448,7 @@ impl Solver {
             return 0;
         }
         let h = uncovered.trailing_zeros() as usize;
-        let blocked = self.misses | placed;
+        let blocked = self.misses | near;
         let mut z = 0;
         for ship in Bits(afloat as u128) {
             let len = LENGTHS[ship];
@@ -336,7 +458,11 @@ impl Solver {
                 if m & blocked != 0 || m & !self.hits == 0 {
                     continue;
                 }
-                let c = self.cover(placed | m, uncovered & !m, afloat & !(1 << ship));
+                let c = self.cover(
+                    near | self.gap.reach(m),
+                    uncovered & !m,
+                    afloat & !(1 << ship),
+                );
                 self.w[ship][slot as usize] += c;
                 z += c;
             }
@@ -426,13 +552,12 @@ impl Solver {
             for row in local.iter_mut() {
                 row.fill(0);
             }
-            let z = exec_parallel(
-                &outer_lens[..n_outer],
-                &inner_lens[..n_inner],
-                free,
-                local,
-                threads,
-            );
+            let (o, i) = (&outer_lens[..n_outer], &inner_lens[..n_inner]);
+            let z = match self.gap {
+                Spacing::Free => exec_parallel::<0>(o, i, free, local, threads),
+                Spacing::NoEdges => exec_parallel::<1>(o, i, free, local, threads),
+                Spacing::Apart => exec_parallel::<2>(o, i, free, local, threads),
+            };
             debug_assert!(z_total.is_none_or(|t| t == z));
             z_total = Some(z);
             for (pos, &i) in outer[..n_outer].iter().enumerate() {
@@ -465,39 +590,44 @@ fn slot_key(ship: usize, slot: usize) -> u64 {
 struct Enumerator {
     misses: u128,
     hits: u128,
+    gap: Spacing,
     /// Layouts left to walk before giving up.
     budget: usize,
     keys: Vec<u64>,
 }
 
 impl Enumerator {
-    fn sunk(&mut self, list: &[(usize, Vec<u8>)], placed: u128, afloat: u8, key: u64) -> bool {
+    fn sunk(
+        &mut self,
+        list: &[(usize, Vec<u8>)],
+        placed: u128,
+        near: u128,
+        afloat: u8,
+        key: u64,
+    ) -> bool {
         let Some(((ship, cands), rest)) = list.split_first() else {
-            return self.cover(placed, self.hits & !placed, afloat, key);
+            return self.cover(near, self.hits & !placed, afloat, key);
         };
         for &slot in cands {
             let m = SEGMENTS[LENGTHS[*ship]][slot as usize];
-            if m & placed == 0 && !self.sunk(rest, placed | m, afloat, key) {
+            if m & near == 0 && !self.sunk(rest, placed | m, near | self.gap.reach(m), afloat, key)
+            {
                 return false;
             }
         }
         true
     }
 
-    fn cover(&mut self, placed: u128, uncovered: u128, afloat: u8, key: u64) -> bool {
+    fn cover(&mut self, near: u128, uncovered: u128, afloat: u8, key: u64) -> bool {
         if uncovered == 0 {
-            return self.free(
-                !(self.misses | placed) & crate::Bitboard::FULL.0,
-                afloat,
-                key,
-            );
+            return self.free(!(self.misses | near) & crate::Bitboard::FULL.0, afloat, key);
         }
         let room: usize = Bits(afloat as u128).map(|s| LENGTHS[s] - 1).sum();
         if room < uncovered.count_ones() as usize {
             return true;
         }
         let h = uncovered.trailing_zeros() as usize;
-        let blocked = self.misses | placed;
+        let blocked = self.misses | near;
         for ship in Bits(afloat as u128) {
             let len = LENGTHS[ship];
             let t = THROUGH[len][h];
@@ -507,7 +637,8 @@ impl Enumerator {
                     continue;
                 }
                 let key = key | slot_key(ship, slot as usize);
-                if !self.cover(placed | m, uncovered & !m, afloat & !(1 << ship), key) {
+                let near = near | self.gap.reach(m);
+                if !self.cover(near, uncovered & !m, afloat & !(1 << ship), key) {
                     return false;
                 }
             }
@@ -532,7 +663,7 @@ impl Enumerator {
             for start in Bits(starts) {
                 let slot = 2 * start + vertical;
                 if !self.free(
-                    free & !SEGMENTS[len][slot],
+                    free & !self.gap.reach(SEGMENTS[len][slot]),
                     rest,
                     key | slot_key(ship, slot),
                 ) {
@@ -554,7 +685,7 @@ fn inner_cost(lens: &[usize; SHIPS], inner: u32) -> f64 {
 }
 
 /// Runs `exec` over `threads` disjoint shares of the outermost loop and sums.
-fn exec_parallel(
+fn exec_parallel<const G: u8>(
     outer: &[usize],
     inner: &[usize],
     free: u128,
@@ -562,14 +693,14 @@ fn exec_parallel(
     threads: usize,
 ) -> u64 {
     if threads <= 1 || outer.is_empty() {
-        return exec(outer, inner, free, w, (0, 1));
+        return exec::<G>(outer, inner, free, w, (0, 1));
     }
     let results: Vec<(u64, Vec<[u64; SLOTS]>)> = thread::scope(|s| {
         let handles: Vec<_> = (0..threads)
             .map(|t| {
                 s.spawn(move || {
                     let mut local = vec![[0u64; SLOTS]; outer.len()];
-                    let z = exec(outer, inner, free, &mut local, (t, threads));
+                    let z = exec::<G>(outer, inner, free, &mut local, (t, threads));
                     (z, local)
                 })
             })
@@ -591,7 +722,8 @@ fn exec_parallel(
 /// Counts layouts of `outer` ships (looped, outermost first) plus `inner`
 /// ships (closed form) inside `free`, adding per-placement counts of each outer
 /// ship to `w`. `share = (i, n)`: only every n-th outermost placement, from i.
-fn exec(
+/// `G`: the spacing between ships, see `reach`.
+fn exec<const G: u8>(
     outer: &[usize],
     inner: &[usize],
     free: u128,
@@ -602,9 +734,9 @@ fn exec(
         ($f:expr) => {
             match outer.len() {
                 0 => $f(free),
-                1 => run1(outer, free, $f, w, share),
-                2 => run2(outer, free, $f, w, share),
-                3 => run3(outer, free, $f, w, share),
+                1 => run1::<G>(outer, free, $f, w, share),
+                2 => run2::<G>(outer, free, $f, w, share),
+                3 => run3::<G>(outer, free, $f, w, share),
                 _ => unreachable!("at most three outer ships"),
             }
         };
@@ -612,7 +744,7 @@ fn exec(
     macro_rules! pair {
         ($($a:literal $b:literal),*) => {
             match (inner[0], inner[1]) {
-                $(($a, $b) => with_inner!(pair_count::<$a, $b>),)*
+                $(($a, $b) => with_inner!(pair_count::<$a, $b, G>),)*
                 _ => unreachable!("ship lengths are 2..=5"),
             }
         };
@@ -655,7 +787,7 @@ fn each_shared(len: usize, free: u128, share: (usize, usize), mut f: impl FnMut(
     });
 }
 
-fn run1(
+fn run1<const G: u8>(
     l: &[usize],
     free: u128,
     inner: impl Fn(u128) -> u64,
@@ -664,14 +796,14 @@ fn run1(
 ) -> u64 {
     let mut z = 0;
     each_shared(l[0], free, share, |s0, m0| {
-        let c = inner(free & !m0);
+        let c = inner(free & !reach::<G>(m0));
         w[0][s0] += c;
         z += c;
     });
     z
 }
 
-fn run2(
+fn run2<const G: u8>(
     l: &[usize],
     free: u128,
     inner: impl Fn(u128) -> u64,
@@ -680,10 +812,10 @@ fn run2(
 ) -> u64 {
     let mut z = 0;
     each_shared(l[0], free, share, |s0, m0| {
-        let f0 = free & !m0;
+        let f0 = free & !reach::<G>(m0);
         let mut z0 = 0;
         each(l[1], f0, |s1, m1| {
-            let c = inner(f0 & !m1);
+            let c = inner(f0 & !reach::<G>(m1));
             w[1][s1] += c;
             z0 += c;
         });
@@ -693,7 +825,7 @@ fn run2(
     z
 }
 
-fn run3(
+fn run3<const G: u8>(
     l: &[usize],
     free: u128,
     inner: impl Fn(u128) -> u64,
@@ -702,13 +834,13 @@ fn run3(
 ) -> u64 {
     let mut z = 0;
     each_shared(l[0], free, share, |s0, m0| {
-        let f0 = free & !m0;
+        let f0 = free & !reach::<G>(m0);
         let mut z0 = 0;
         each(l[1], f0, |s1, m1| {
-            let f1 = f0 & !m1;
+            let f1 = f0 & !reach::<G>(m1);
             let mut z1 = 0;
             each(l[2], f1, |s2, m2| {
-                let c = inner(f1 & !m2);
+                let c = inner(f1 & !reach::<G>(m2));
                 w[2][s2] += c;
                 z1 += c;
             });
@@ -733,14 +865,84 @@ fn pop(x: u128) -> u64 {
     x.count_ones() as u64
 }
 
-/// Disjoint placements of an `A`-ship and a `B`-ship inside `free`:
-/// all pairs minus overlapping pairs. Parallel ships overlap when their starts
+/// `COLUMNS[d + 6]`: the cells whose column, moved by `d`, is on the board.
+const COLUMNS: [u128; 13] = {
+    let mut t = [0u128; 13];
+    let mut d = 0;
+    while d < 13 {
+        let mut i = 0;
+        while i < CELLS {
+            let col = (i % SIZE) as i32 + d as i32 - 6;
+            if col >= 0 && col < SIZE as i32 {
+                t[d] |= 1 << i;
+            }
+            i += 1;
+        }
+        d += 1;
+    }
+    t
+};
+
+/// Pairs of a start in `sa` and a start in `sb` lying `dr` rows and `dc`
+/// columns further.
+#[inline(always)]
+fn pairs_at(sa: u128, sb: u128, dr: i32, dc: i32) -> u64 {
+    // Without the column mask a start would pair up with one in the next
+    // row, where the shifted column wraps around.
+    let sa = sa & COLUMNS[(dc + 6) as usize];
+    let off = dr * SIZE as i32 + dc;
+    pop(if off >= 0 {
+        sa & (sb >> off)
+    } else {
+        sa & (sb << -off)
+    })
+}
+
+/// Pairs of an `A`-ship and a `B`-ship inside `free` that break spacing `G`
+/// (1 = share a cell or an edge, 2 = also touch at a corner).
+///
+/// Whether two placements clash depends only on their directions and on
+/// where one starts relative to the other. Seen from a ship lying along its
+/// line from 0 to A - 1: a parallel ship in the same line clashes when it
+/// starts between -B and A, in a neighbouring line when it lies alongside
+/// (or, for `G` = 2, corner to corner). A crossing ship at position `x`
+/// along the line, starting `y` lines away, clashes when it reaches the
+/// line or its neighbours beside the ship, or the line itself just past an
+/// end (`G` = 2: its neighbours too).
+#[inline(always)]
+fn clashes<const A: usize, const B: usize, const G: u8>(
+    (ha, va): (u128, u128),
+    (hb, vb): (u128, u128),
+) -> u64 {
+    let (a, b) = (A as i32, B as i32);
+    let mut n = 0;
+    for across in -1..=1i32 {
+        let cut = (G == 1 && across != 0) as i32;
+        for along in -b + cut..=a - cut {
+            n += pairs_at(ha, hb, across, along) + pairs_at(va, vb, along, across);
+        }
+    }
+    for x in -1..=a {
+        let cut = (G == 1 && (x == -1 || x == a)) as i32;
+        for y in -b + cut..=1 - cut {
+            n += pairs_at(ha, vb, y, x) + pairs_at(va, hb, x, y);
+        }
+    }
+    n
+}
+
+/// Placements of an `A`-ship and a `B`-ship inside `free` that keep spacing
+/// `G`: all pairs minus the pairs that break it. Without spacing (`G` = 0)
+/// those are the overlapping pairs: parallel ships overlap when their starts
 /// are within reach along the line; crossing ships share exactly one cell.
 #[inline(always)]
-fn pair_count<const A: usize, const B: usize>(free: u128) -> u64 {
+fn pair_count<const A: usize, const B: usize, const G: u8>(free: u128) -> u64 {
     let (ha, va) = starts(A, free);
     let (hb, vb) = starts(B, free);
     let all = (pop(ha) + pop(va)) * (pop(hb) + pop(vb));
+    if G != 0 {
+        return all - clashes::<A, B, G>((ha, va), (hb, vb));
+    }
     let mut ov = 0;
     // Collinear: b starts d cells before (d < B) or after (d < A) a.
     for d in 1..B {
@@ -765,7 +967,7 @@ mod tests {
     use crate::game::{Board, Layout, Outcome};
     use crate::rng::Rng;
 
-    fn brute_pairs(a: usize, b: usize, free: u128) -> u64 {
+    fn brute_pairs(a: usize, b: usize, free: u128, gap: Spacing) -> u64 {
         let pa: Vec<u128> = (0..SLOTS)
             .map(|s| SEGMENTS[a][s])
             .filter(|&m| m != 0 && m & !free == 0)
@@ -775,7 +977,7 @@ mod tests {
             .filter(|&m| m != 0 && m & !free == 0)
             .collect();
         pa.iter()
-            .map(|x| pb.iter().filter(|y| *x & **y == 0).count() as u64)
+            .map(|x| pb.iter().filter(|y| gap.reach(*x) & **y == 0).count() as u64)
             .sum()
     }
 
@@ -791,7 +993,9 @@ mod tests {
             }
             macro_rules! check {
                 ($($a:literal $b:literal),*) => {$(
-                    assert_eq!(pair_count::<$a, $b>(free), brute_pairs($a, $b, free), "{} {}", $a, $b);
+                    assert_eq!(pair_count::<$a, $b, 0>(free), brute_pairs($a, $b, free, Spacing::Free), "{} {}", $a, $b);
+                    assert_eq!(pair_count::<$a, $b, 1>(free), brute_pairs($a, $b, free, Spacing::NoEdges), "{} {} no edges", $a, $b);
+                    assert_eq!(pair_count::<$a, $b, 2>(free), brute_pairs($a, $b, free, Spacing::Apart), "{} {} apart", $a, $b);
                 )*};
             }
             check!(5 4, 5 3, 5 2, 4 3, 4 2, 3 3, 3 2, 2 2, 2 5, 5 5);
@@ -800,6 +1004,10 @@ mod tests {
 
     /// Direct enumeration of the consistency definition, for cross-checking.
     fn naive(k: &Knowledge) -> (u64, [u64; CELLS]) {
+        naive_spaced(k, Spacing::Free)
+    }
+
+    fn naive_spaced(k: &Knowledge, gap: Spacing) -> (u64, [u64; CELLS]) {
         let cands: Vec<Vec<u128>> = (0..SHIPS)
             .map(|s| {
                 let len = LENGTHS[s];
@@ -816,11 +1024,13 @@ mod tests {
         let mut z = 0;
         let mut cells = [0u64; CELLS];
         let mut stack = [0u128; SHIPS];
+        #[allow(clippy::too_many_arguments)]
         fn rec(
             i: usize,
             used: u128,
             cands: &[Vec<u128>],
             k: &Knowledge,
+            gap: Spacing,
             stack: &mut [u128; SHIPS],
             z: &mut u64,
             cells: &mut [u64; CELLS],
@@ -835,13 +1045,13 @@ mod tests {
                 return;
             }
             for &m in &cands[i] {
-                if m & used == 0 {
+                if stack[..i].iter().all(|&other| gap.reach(other) & m == 0) {
                     stack[i] = m;
-                    rec(i + 1, used | m, cands, k, stack, z, cells);
+                    rec(i + 1, used | m, cands, k, gap, stack, z, cells);
                 }
             }
         }
-        rec(0, 0, &cands, k, &mut stack, &mut z, &mut cells);
+        rec(0, 0, &cands, k, gap, &mut stack, &mut z, &mut cells);
         (z, cells)
     }
 
@@ -882,6 +1092,118 @@ mod tests {
             assert_eq!(p.layouts, z, "{k:?}");
             assert_eq!(p.cells, cells, "{k:?}");
             checked += 1;
+        }
+    }
+
+    /// States from games on layouts that keep the spacing, so that spaced
+    /// counts are not mostly zero.
+    fn spaced_state(rng: &mut Rng, shots: usize, gap: Spacing) -> Knowledge {
+        loop {
+            let layout = Layout::random(rng);
+            let apart = (0..SHIPS).all(|a| {
+                (0..a).all(|b| gap.reach(layout.ship(FLEET[a]).0) & layout.ship(FLEET[b]).0 == 0)
+            });
+            if !apart {
+                continue;
+            }
+            let mut board = Board::new(layout);
+            let mut k = Knowledge::new();
+            for _ in 0..shots {
+                let unknown = k.unknown().0;
+                if k.won() {
+                    break;
+                }
+                let near = neighbours4(k.hits.0) & unknown;
+                let cell = if near != 0 && rng.below(4) != 0 {
+                    rng.pick_bit(near)
+                } else {
+                    rng.pick_bit(unknown)
+                };
+                let o = board.fire(cell);
+                k.record(cell, o);
+            }
+            return k;
+        }
+    }
+
+    #[test]
+    fn spaced_counts_match_naive_enumeration() {
+        let mut rng = Rng::new(71);
+        for gap in [Spacing::NoEdges, Spacing::Apart] {
+            let mut positive = 0;
+            for i in 0..120 {
+                let shots = 45 + rng.below(40) as usize;
+                // Half the states come from layouts that break the spacing.
+                let k = if i % 2 == 0 {
+                    spaced_state(&mut rng, shots, gap)
+                } else {
+                    random_state(&mut rng, shots)
+                };
+                let (z, cells) = naive_spaced(&k, gap);
+                let p = Posterior::compute_spaced(&k, gap, 1);
+                assert_eq!(p.layouts, z, "{gap:?} {k:?}");
+                assert_eq!(p.cells, cells, "{gap:?} {k:?}");
+                positive += (z > 0) as usize;
+                if i % 2 == 0 {
+                    assert!(z > 0, "the true layout keeps the spacing");
+                }
+                // Its placements are those of the free count that keep it.
+                if let Some(f) = p.enumerate_spaced(&k, 3000, gap) {
+                    assert_eq!(f.iter().map(|x| x.1).sum::<u64>(), z);
+                    let mut ships = [[0u64; SLOTS]; SHIPS];
+                    for (t, w) in &f {
+                        for s in 0..SHIPS {
+                            if let Some(slot) = t[s] {
+                                ships[s][slot as usize] += w;
+                            }
+                        }
+                    }
+                    for s in (0..SHIPS).filter(|&s| k.sunk[s].is_none()) {
+                        assert_eq!(ships[s], p.ships[s]);
+                    }
+                }
+            }
+            assert!(positive >= 60);
+        }
+    }
+
+    /// No hits at all: every ship is counted by the loops and the closed
+    /// form, the path an empty board takes.
+    #[test]
+    fn spaced_counts_match_naive_enumeration_without_hits() {
+        let mut rng = Rng::new(73);
+        for trial in 0..8 {
+            let mut k = Knowledge::new();
+            for _ in 0..38 + trial {
+                let c = rng.pick_bit(k.unknown().0);
+                k.record(c, Outcome::Miss);
+            }
+            for gap in [Spacing::Free, Spacing::NoEdges, Spacing::Apart] {
+                let (z, cells) = naive_spaced(&k, gap);
+                let p = Posterior::compute_spaced(&k, gap, 1 + trial % 3);
+                assert!(z > 0 || trial > 0);
+                assert_eq!(p.layouts, z, "{gap:?} {k:?}");
+                assert_eq!(p.cells, cells, "{gap:?} {k:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn spaced_counts_are_nested() {
+        let mut rng = Rng::new(72);
+        for _ in 0..10 {
+            let k = spaced_state(&mut rng, 25, Spacing::Apart);
+            let free = Posterior::compute(&k);
+            let edges = Posterior::compute_spaced(&k, Spacing::NoEdges, 2);
+            let apart = Posterior::compute_spaced(&k, Spacing::Apart, 2);
+            assert!(apart.layouts > 0 && apart.layouts < edges.layouts);
+            assert!(edges.layouts < free.layouts);
+            for c in 0..CELLS {
+                assert!(apart.cells[c] <= edges.cells[c] && edges.cells[c] <= free.cells[c]);
+            }
+            let cached = Posterior::cached_spaced(&k, Spacing::Apart, 1);
+            assert_eq!(cached.cells, apart.cells);
+            assert_eq!(cached.ships, apart.ships);
         }
     }
 
@@ -1022,5 +1344,10 @@ mod tests {
         }
         // Expected occupied cells is exactly 17.
         assert_eq!(p.cells.iter().sum::<u64>(), 17 * p.layouts);
+        for gap in [Spacing::Free, Spacing::NoEdges, Spacing::Apart] {
+            let p = Posterior::compute_spaced(&Knowledge::new(), gap, 8);
+            assert_eq!(p.layouts, Posterior::total(gap), "{gap:?}");
+            assert_eq!(p.cells.iter().sum::<u64>(), 17 * p.layouts);
+        }
     }
 }

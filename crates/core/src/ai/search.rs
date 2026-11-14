@@ -44,7 +44,12 @@ pub fn worlds(
     limit: usize,
     prior: Option<&Tilt>,
 ) -> Option<Vec<World>> {
-    Some(build(k, p.enumerate_afloat(k, limit)?, prior))
+    let placements = p.enumerate_afloat(k, limit)?;
+    Some(build(
+        k,
+        placements.into_iter().map(|(s, n)| (s, n as f64)).collect(),
+        prior,
+    ))
 }
 
 /// `n` worlds drawn from the posterior `p` of `k`, repeats merged.
@@ -62,14 +67,18 @@ pub fn sampled(
     let mut draws: Vec<_> = seen.into_iter().collect();
     // Hash order is random per process: fix it, so choices repeat.
     draws.sort_unstable();
-    build(k, draws, prior)
+    build(
+        k,
+        draws.into_iter().map(|(s, n)| (s, n as f64)).collect(),
+        prior,
+    )
 }
 
-/// Worlds from placements of the afloat ships and how many layouts (or
-/// draws) stand behind each, weighted by the prior.
-fn build(
+/// Worlds from placements of the afloat ships and the weight of each (how
+/// many layouts or draws stand behind it), weighted further by the prior.
+pub(crate) fn build(
     k: &Knowledge,
-    placements: Vec<([Option<u8>; SHIPS], u64)>,
+    placements: Vec<([Option<u8>; SHIPS], f64)>,
     prior: Option<&Tilt>,
 ) -> Vec<World> {
     let mut out: Vec<World> = placements
@@ -84,7 +93,7 @@ fn build(
             World {
                 ships,
                 all: ships.iter().fold(0, |a, m| a | m),
-                weight: layouts as f64,
+                weight: layouts,
             }
         })
         .collect();

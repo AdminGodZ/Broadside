@@ -150,6 +150,7 @@ fn cmd_sim(o: &Opts) -> Result<(), String> {
         &|| ai::shooter(&sh).unwrap(),
         &|| ai::placer(&pl).unwrap(),
         games,
+        o.get("match", 1u64)?,
         seed,
         o.threads()?,
         &progress(games),
@@ -186,6 +187,7 @@ fn cmd_compare(o: &Opts) -> Result<(), String> {
     let pl = o.str("placer", "uniform");
     check_placer(&pl)?;
     let games = o.get("games", 1000u64)?;
+    let match_len = o.get("match", 1u64)?;
     let seed = o.get("seed", random_seed())?;
     let threads = o.threads()?;
     let run = |name: &str| {
@@ -194,6 +196,7 @@ fn cmd_compare(o: &Opts) -> Result<(), String> {
             &|| ai::shooter(name).unwrap(),
             &|| ai::placer(&pl).unwrap(),
             games,
+            match_len,
             seed,
             threads,
             &progress(games),

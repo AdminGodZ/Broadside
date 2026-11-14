@@ -10,6 +10,7 @@
 //! to list can fall back on rollouts against sampled layouts.
 
 use super::Shooter;
+use super::habits::{self, Habits, KINDS, Mix};
 use super::placement::Tilt;
 use super::search::{self, Tree};
 use crate::bitboard::{Bits, CELLS};
@@ -58,6 +59,12 @@ pub struct Broadside {
     pub learner: Option<Learner>,
     /// In a game against an opponent: our fleet and what it knows of it.
     pub race: Option<(Layout, Knowledge)>,
+    /// What the opponent is believed to do about spacing its ships before
+    /// any of its fleets has been seen.
+    pub habits: Habits,
+    /// Its fleets seen so far, by kind (`Layout::contact`); counted only
+    /// while `learner` is set.
+    pub seen: [u32; KINDS],
 }
 
 /// Learns the opponent's placement habits by model selection.
@@ -184,7 +191,16 @@ impl Broadside {
             prior: None,
             learner: Some(Learner::default()),
             race: None,
+            habits: Habits::neutral(),
+            seen: [0; KINDS],
         }
+    }
+
+    /// The belief about the opponent's spacing now; `None` while it is what
+    /// the rules alone say.
+    pub fn spacing(&self) -> Option<[f64; KINDS]> {
+        let kinds = self.habits.after(&self.seen);
+        (kinds != habits::neutral()).then_some(kinds)
     }
 
     /// No search: always the likeliest cell.
@@ -426,6 +442,7 @@ impl Shooter for Broadside {
     fn learn(&mut self, layout: &crate::game::Layout) {
         if let Some(l) = self.learner.as_mut() {
             self.prior = l.observe(layout);
+            self.seen[layout.contact()] += 1;
         }
     }
 
@@ -452,13 +469,22 @@ impl Shooter for Broadside {
             // Contradictory reports: nothing to reason from.
             return rng.pick_bit(unknown);
         }
-        let (certain, forced) = certain_cells(&p, k);
+        // A belief about spacing that fits nothing known was wrong: the
+        // rules alone are left.
+        let mix = self
+            .spacing()
+            .and_then(|kinds| Mix::new(k, &p, &kinds, self.threads));
+        let (certain, forced) = certain_cells(mix.as_ref().map_or(&p, |m| &m.support), k);
         if let Some(c) = forced {
             return c;
         }
         let prior = self.prior.as_deref();
         let s = self.search;
-        if let Some(worlds) = search::worlds(k, &p, s.exact_limit, prior) {
+        let worlds = match &mix {
+            Some(m) => m.worlds(k, s.exact_limit, prior),
+            None => search::worlds(k, &p, s.exact_limit, prior),
+        };
+        if let Some(worlds) = worlds {
             let mut tree = Tree::new(&worlds, s);
             // Its own random stream (as below): whatever the search draws
             // must not shift the tie-breaks of later moves.
@@ -470,10 +496,14 @@ impl Shooter for Broadside {
                 None => tree.choose(k.hits.0, self.threads),
             };
         }
-        let scores = cell_scores(&p, prior, k);
+        let scores = match &mix {
+            Some(m) => m.scores(prior, k),
+            None => cell_scores(&p, prior, k),
+        };
         // Greedy takes a certain hit before anything else.
         let pool = if certain != 0 { certain } else { unknown };
-        if (k.afloat_mask().count_ones() as usize) <= s.max_afloat && s.samples >= 2 {
+        let sample = mix.is_none() && s.samples >= 2;
+        if (k.afloat_mask().count_ones() as usize) <= s.max_afloat && sample {
             let mut cands: Vec<usize> = Bits(pool).collect();
             // Stable sort: ties keep the lowest cell first, like `best_det`.
             cands.sort_by(|&a, &b| scores[b].total_cmp(&scores[a]));

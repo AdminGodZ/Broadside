@@ -191,30 +191,37 @@ pub struct Game {
 }
 
 /// Plays `games` games of a shooter against a placer and returns them in
-/// order. Every game uses fresh players, so nothing is learned between games,
-/// and game `i` sees the same layout whatever the shooter: results of two
-/// shooters pair up game by game.
+/// order, in matches of `match_len` games. Players persist through a match
+/// and learn after each game: the shooter sees the layout, the placer the
+/// shots. With `match_len = 1` every game uses fresh players and nothing is
+/// learned. Game `i` draws its layout from the same random stream whatever
+/// the shooter, so against a placer that does not react to the shots the
+/// results of two shooters pair up game by game.
 pub fn games(
     shooter: ShooterFactory,
     placer: PlacerFactory,
     games: u64,
+    match_len: u64,
     seed: u64,
     threads: usize,
     progress: &(dyn Fn(u64) + Sync),
 ) -> Vec<Game> {
+    let match_len = match_len.max(1);
     let per_thread = parallel(
-        games,
+        games.div_ceil(match_len),
         threads,
-        &|i, out: &mut Vec<(u64, Game)>| {
-            let layout = placer().place(&mut Rng::stream(seed, 2 * i));
-            let shots = play_out(
-                shooter().as_mut(),
-                layout,
-                &mut Rng::stream(seed, 2 * i + 1),
-            );
-            out.push((i, Game { layout, shots }));
+        &|m, out: &mut Vec<(u64, Game)>| {
+            let (mut sh, mut pl) = (shooter(), placer());
+            for i in (m * match_len..games).take(match_len as usize) {
+                let layout = pl.place(&mut Rng::stream(seed, 2 * i));
+                let shots = play_game(sh.as_mut(), layout, &mut Rng::stream(seed, 2 * i + 1));
+                sh.learn(&layout);
+                pl.learn(&layout, &shots);
+                let shots = shots.len() as u32;
+                out.push((i, Game { layout, shots }));
+            }
         },
-        progress,
+        &|done| progress((done * match_len).min(games)),
     );
     let mut all: Vec<(u64, Game)> = per_thread.into_iter().flatten().collect();
     all.sort_unstable_by_key(|g| g.0);
@@ -231,7 +238,7 @@ pub fn benchmark(
     progress: &(dyn Fn(u64) + Sync),
 ) -> Stats {
     let mut stats = Stats::default();
-    for g in self::games(shooter, placer, games, seed, threads, progress) {
+    for g in self::games(shooter, placer, games, 1, seed, threads, progress) {
         stats.add(g.shots);
     }
     stats
@@ -443,6 +450,7 @@ mod tests {
                 &|| ai::shooter(name).unwrap(),
                 &|| Box::new(UniformPlacer),
                 6,
+                1,
                 5,
                 3,
                 &|_| {},

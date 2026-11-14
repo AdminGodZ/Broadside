@@ -2,6 +2,7 @@
 
 pub mod baseline;
 pub mod engine;
+pub mod habits;
 pub mod placement;
 pub mod search;
 mod tilts;
@@ -71,9 +72,55 @@ impl Placer for SpacedPlacer {
     }
 }
 
+/// Uniform over layouts in which every ship shares an edge with another:
+/// the opposite habit, and what someone who knows that an opponent expects
+/// spaced fleets would place.
+pub struct ClumpedPlacer;
+
+impl Placer for ClumpedPlacer {
+    fn name(&self) -> String {
+        "clumped".into()
+    }
+    fn place(&mut self, rng: &mut Rng) -> Layout {
+        loop {
+            let l = Layout::random(rng);
+            let ships = crate::fleet::FLEET.map(|s| l.ship(s).0);
+            let lonely = |a: usize| {
+                let near = crate::bitboard::neighbours4(ships[a]);
+                (0..ships.len()).all(|b| b == a || near & ships[b] == 0)
+            };
+            if !(0..ships.len()).any(lonely) {
+                return l;
+            }
+        }
+    }
+}
+
+/// Changes habit every `every` games: spaced fleets, then clumped ones,
+/// and so on. Whatever an opponent has just learned is wrong next.
+pub struct SwapPlacer {
+    pub every: u32,
+    placed: u32,
+}
+
+impl Placer for SwapPlacer {
+    fn name(&self) -> String {
+        format!("swap{}", self.every)
+    }
+    fn place(&mut self, rng: &mut Rng) -> Layout {
+        let spaced = (self.placed / self.every).is_multiple_of(2);
+        self.placed += 1;
+        if spaced {
+            SpacedPlacer.place(rng)
+        } else {
+            ClumpedPlacer.place(rng)
+        }
+    }
+}
+
 pub const SHOOTERS: &[&str] = &[
     "broadside",
-    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples, race, spread)",
+    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples, race, spread; apart, corners, weight)",
     "greedy",
     "density",
     "NAME@tiltA (expects tiltA placement)",
@@ -86,6 +133,8 @@ pub const PLACERS: &[&str] = &[
     "equilibrium",
     "uniform",
     "spaced",
+    "clumped",
+    "swapN (spaced and clumped in turn, N games each)",
     "tiltA (e.g. tilt1.5)",
     "mix:A=P,A=P,...",
 ];
@@ -104,10 +153,17 @@ fn engine(name: &str) -> Option<engine::Broadside> {
         _ => engine::Broadside::new(),
     };
     let s = &mut e.search;
+    // Believed chance, in percent, that the opponent's ships lie apart or
+    // meet at corners only.
+    let (mut apart, mut corners) = (None, None);
     for setting in name.strip_prefix("broadside:")?.split(',') {
         let (key, v) = setting.split_once('=')?;
         let v: usize = v.parse().ok()?;
         match key {
+            "apart" => apart = Some(v as f64 / 100.0),
+            "corners" => corners = Some(v as f64 / 100.0),
+            // How many tenths of a revealed fleet that belief counts for.
+            "weight" => e.habits.games = v as f64 / 10.0,
             "exact" => s.exact_limit = v,
             "cands" => s.candidates = v,
             "solve" => s.solve_worlds = v,
@@ -121,6 +177,23 @@ fn engine(name: &str) -> Option<engine::Broadside> {
         }
     }
     let valid = s.candidates >= 1 && s.solve_worlds <= 64 && (s.max_afloat == 0 || s.samples >= 2);
+    // Kinds not named share what is left as under uniform placement.
+    let n = habits::neutral();
+    let share =
+        |left: f64, a: usize, b: usize| [left * n[a] / (n[a] + n[b]), left * n[b] / (n[a] + n[b])];
+    e.habits.kinds = match (apart, corners) {
+        (None, None) => n,
+        (Some(a), Some(c)) => [a, c, 1.0 - a - c],
+        (Some(a), None) => {
+            let [c, e] = share(1.0 - a, 1, 2);
+            [a, c, e]
+        }
+        (None, Some(c)) => {
+            let [a, e] = share(1.0 - c, 0, 2);
+            [a, c, e]
+        }
+    };
+    let valid = valid && e.habits.kinds.iter().all(|k| (0.0..=1.0).contains(k));
     valid.then_some(e)
 }
 
@@ -151,6 +224,11 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
     Some(match name {
         "uniform" => Box::new(UniformPlacer),
         "spaced" => Box::new(SpacedPlacer),
+        "clumped" => Box::new(ClumpedPlacer),
+        n if n.starts_with("swap") => Box::new(SwapPlacer {
+            every: n[4..].parse().ok().filter(|&n| n > 0)?,
+            placed: 0,
+        }),
         "broadside" => Box::new(placement::AdaptivePlacer::new()),
         "equilibrium" => Box::new(placement::MixedPlacer::equilibrium()),
         n if n.starts_with("mix:") => {
