@@ -1,0 +1,11 @@
+[package]
+name = "broadside-wasm"
+description = "Broadside engine for the browser: a C-style API over WebAssembly"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+broadside-core = { path = "../core" }

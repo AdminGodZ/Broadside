@@ -2,3 +2,8 @@
 # Remove if you ever need portable binaries.
 [build]
 rustflags = ["-C", "target-cpu=native"]
+
+# The browser build: no native CPU there; SIMD and bulk memory run in every
+# current browser.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128,+bulk-memory"]

@@ -78,7 +78,8 @@ Tests: `cargo test`, slow ones with `cargo test --release -- --ignored`.
    placements before the afloat ships can be listed (`afloat=N`), race-aware shooting (`race=N`).
    **Open**: an exact prior-weighted posterior before the search starts, a shooter that tracks a
    mixed placer within a game, tests against outside engines and human players.
-4. **Later, maybe**: WebAssembly build for a browser UI.
+4. ~~WebAssembly build for a browser UI~~: `web/build.sh` builds `web/dist/broadside.html`, one
+   self-contained page that plays the full engine in the browser (open it directly, no server).
 
 ## Reference numbers
 
