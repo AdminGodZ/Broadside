@@ -173,12 +173,13 @@ impl MixedPlacer {
         Self { parts }
     }
 
-    /// Equilibrium of the measured placement game (`broadside matrix`,
-    /// 11 tilts x 11 expectations, 20k games per cell): no shooter in that
-    /// family needs fewer than ~44.9 shots against it, versus 44.5 for
-    /// uniform placement, while naive shooters need ~45.7.
+    /// Robust mix from the measured placement game (`broadside matrix`, 11
+    /// tilts x 11 expectations, against both the exact and the density
+    /// shooter families, 20-40k games per cell). Worst case over both families
+    /// ~44.9 shots, versus 44.6 for uniform placement; shooters that assume
+    /// uniform placement need ~45.4-45.7.
     pub fn equilibrium() -> Self {
-        Self::new(&[(0.0, 0.72), (1.0, 0.22), (3.0, 0.06)])
+        Self::new(&[(0.25, 0.45), (0.75, 0.30), (1.0, 0.25)])
     }
 }
 
