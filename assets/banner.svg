@@ -1,0 +1,272 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1290 362" width="1290" height="362" role="img" aria-label="Broadside">
+<title>Broadside</title>
+<defs>
+  <radialGradient id="bgb" cx="50%" cy="38%" r="75%">
+    <stop offset="0" stop-color="#123349"/><stop offset="1" stop-color="#08131c"/>
+  </radialGradient>
+  <linearGradient id="hullb" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#f4f9fc"/><stop offset="1" stop-color="#b9cbd7"/>
+  </linearGradient>
+  <radialGradient id="hitb" cx="50%" cy="45%" r="60%">
+    <stop offset="0" stop-color="#ffb199"/><stop offset=".45" stop-color="#f0503c"/><stop offset="1" stop-color="#9e2416"/>
+  </radialGradient>
+  <filter id="glowb" x="-80%" y="-80%" width="260%" height="260%">
+    <feGaussianBlur stdDeviation="6" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <linearGradient id="sweepb" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#f5c02a" stop-opacity="0"/><stop offset="1" stop-color="#f5c02a" stop-opacity=".16"/>
+  </linearGradient>
+</defs>
+<style>
+  .ringb { transform-box: fill-box; transform-origin: center; animation: pingb 2.4s ease-out infinite; }
+  @keyframes pingb { 0% { transform: scale(.6); opacity: .95; } 80%,100% { transform: scale(2.1); opacity: 0; } }
+  .scanb { animation: scanb 7s linear infinite; }
+  @keyframes scanb { from { transform: translateX(0); } to { transform: translateX(var(--travel)); } }
+  @media (prefers-reduced-motion: reduce) { .ringb, .scanb { animation: none; } }
+</style>
+<rect width="1290" height="362" rx="28" fill="url(#bgb)"/>
+<rect x="40" y="40" width="1210" height="242" fill="#0f2537"/>
+<line x1="40" y1="40" x2="40" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="62" y1="40" x2="62" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="84" y1="40" x2="84" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="106" y1="40" x2="106" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="128" y1="40" x2="128" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="150" y1="40" x2="150" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="172" y1="40" x2="172" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="194" y1="40" x2="194" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="216" y1="40" x2="216" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="238" y1="40" x2="238" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="260" y1="40" x2="260" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="282" y1="40" x2="282" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="304" y1="40" x2="304" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="326" y1="40" x2="326" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="348" y1="40" x2="348" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="370" y1="40" x2="370" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="392" y1="40" x2="392" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="414" y1="40" x2="414" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="436" y1="40" x2="436" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="458" y1="40" x2="458" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="480" y1="40" x2="480" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="502" y1="40" x2="502" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="524" y1="40" x2="524" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="546" y1="40" x2="546" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="568" y1="40" x2="568" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="590" y1="40" x2="590" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="612" y1="40" x2="612" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="634" y1="40" x2="634" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="656" y1="40" x2="656" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="678" y1="40" x2="678" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="700" y1="40" x2="700" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="722" y1="40" x2="722" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="744" y1="40" x2="744" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="766" y1="40" x2="766" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="788" y1="40" x2="788" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="810" y1="40" x2="810" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="832" y1="40" x2="832" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="854" y1="40" x2="854" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="876" y1="40" x2="876" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="898" y1="40" x2="898" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="920" y1="40" x2="920" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="942" y1="40" x2="942" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="964" y1="40" x2="964" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="986" y1="40" x2="986" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1008" y1="40" x2="1008" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1030" y1="40" x2="1030" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1052" y1="40" x2="1052" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1074" y1="40" x2="1074" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1096" y1="40" x2="1096" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1118" y1="40" x2="1118" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1140" y1="40" x2="1140" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1162" y1="40" x2="1162" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1184" y1="40" x2="1184" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1206" y1="40" x2="1206" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1228" y1="40" x2="1228" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="1250" y1="40" x2="1250" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="40" x2="1250" y2="40" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="62" x2="1250" y2="62" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="84" x2="1250" y2="84" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="106" x2="1250" y2="106" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="128" x2="1250" y2="128" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="150" x2="1250" y2="150" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="172" x2="1250" y2="172" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="194" x2="1250" y2="194" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="216" x2="1250" y2="216" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="238" x2="1250" y2="238" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="260" x2="1250" y2="260" stroke="#1e3e56" stroke-width="1"/>
+<line x1="40" y1="282" x2="1250" y2="282" stroke="#1e3e56" stroke-width="1"/>
+<clipPath id="clipb"><rect x="40" y="40" width="1210" height="242"/></clipPath>
+<g clip-path="url(#clipb)"><rect class="scanb" style="--travel:1573px" x="-323" y="40" width="363" height="242" fill="url(#sweepb)"/></g>
+<circle cx="51.0" cy="51.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<circle cx="161.0" cy="271.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<circle cx="337.0" cy="51.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<circle cx="491.0" cy="271.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<circle cx="645.0" cy="51.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<circle cx="777.0" cy="271.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<circle cx="953.0" cy="51.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<circle cx="1063.0" cy="271.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<circle cx="1239.0" cy="51.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<circle cx="425.0" cy="161.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<circle cx="1019.0" cy="139.0" r="2.2" fill="#7f9bb0" opacity=".75"/>
+<rect x="86.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="86.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="86.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="86.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hitb)" filter="url(#glowb)"/>
+<rect x="86.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="86.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="86.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="108.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="108.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="108.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="130.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="130.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="130.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="152.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="152.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="152.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="174.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="174.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="174.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="174.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="218.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="218.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="218.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="218.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="218.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="218.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="218.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="240.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hitb)" filter="url(#glowb)"/>
+<rect x="240.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="262.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="262.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="262.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="284.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="284.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="284.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="306.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="306.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="306.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="350.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="350.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="350.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="350.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="350.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="372.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="372.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="394.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="394.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="416.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="416.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="438.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="438.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="438.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="438.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="438.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="482.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="482.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="482.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="482.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="482.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="482.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="504.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="504.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="526.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="526.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="548.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="548.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="570.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="570.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="570.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="570.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="570.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="570.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hitb)" filter="url(#glowb)"/>
+<rect x="614.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="614.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="614.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="614.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="614.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="614.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="614.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="636.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="636.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="658.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="658.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="680.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="680.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="702.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="702.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="702.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="702.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="702.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="746.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="746.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="746.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="768.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="768.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="768.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="790.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="790.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="790.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="812.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="812.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="812.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="834.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="834.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="834.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="878.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="878.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="900.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="900.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="900.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="900.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="900.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="900.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="900.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="922.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="922.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="966.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="966.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="966.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="966.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="966.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="966.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="966.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="988.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="988.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1010.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1010.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1032.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1032.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1054.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1054.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1054.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1054.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1054.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1098.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1098.5" y="108.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1098.5" y="130.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1098.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1098.5" y="174.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1098.5" y="196.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1098.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1120.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1120.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1120.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1142.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1142.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1142.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1164.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1164.5" y="152.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1164.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<rect x="1186.5" y="86.5" width="17.0" height="17.0" rx="3.1" fill="url(#hitb)" filter="url(#glowb)"/>
+<rect x="1186.5" y="218.5" width="17.0" height="17.0" rx="3.1" fill="url(#hullb)"/>
+<circle class="ringb" cx="1195.0" cy="95.0" r="13.6" fill="none" stroke="#f5c02a" stroke-width="1.5"/>
+<circle cx="1195.0" cy="95.0" r="17.2" fill="none" stroke="#f5c02a" stroke-width="1.2"/>
+<line x1="1207.1" y1="95.0" x2="1218.8" y2="95.0" stroke="#f5c02a" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="1182.9" y1="95.0" x2="1171.2" y2="95.0" stroke="#f5c02a" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="1195.0" y1="107.1" x2="1195.0" y2="118.8" stroke="#f5c02a" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="1195.0" y1="82.9" x2="1195.0" y2="71.2" stroke="#f5c02a" stroke-width="1.5" stroke-linecap="round"/>
+<rect x="40" y="40" width="1210" height="242" fill="none" stroke="#7f9bb0" stroke-opacity=".5" stroke-width="1.5"/>
+<text x="40" y="328" fill="#dce8ef" font-family="JetBrains Mono, ui-monospace, Menlo, Consolas, monospace" font-size="17" letter-spacing="3.5" font-weight="600">EXACT BATTLESHIP ENGINE</text>
+<text x="1250" y="328" fill="#7f9bb0" font-family="JetBrains Mono, ui-monospace, Menlo, Consolas, monospace" font-size="14" letter-spacing="2" text-anchor="end">30,093,975,536 FLEETS · EVERY SHOT</text>
+</svg>
