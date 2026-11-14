@@ -426,6 +426,22 @@ mod learner_tests {
         for _ in 0..80 {
             prior = l.observe(&Layout::random(&mut rng));
         }
-        assert!(prior.is_none(), "picked a non-uniform model against uniform layouts");
+        assert!(
+            prior.is_none(),
+            "picked a non-uniform model against uniform layouts"
+        );
+    }
+
+    #[test]
+    fn learner_recognizes_edge_heavy_placement() {
+        let mut l = Learner::default();
+        let mut placer = super::super::placement::TiltedPlacer::new(2.0);
+        let mut rng = Rng::new(18);
+        let mut prior = None;
+        for _ in 0..40 {
+            prior = l.observe(&super::super::Placer::place(&mut placer, &mut rng));
+        }
+        let corner = prior.expect("a non-uniform model").theta[0];
+        assert!(corner > 1.0, "corner weight {corner}");
     }
 }

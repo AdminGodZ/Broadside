@@ -41,8 +41,13 @@ Tests: `cargo test`, slow ones with `cargo test --release -- --ignored`.
   afloat ships for each candidate shot, and deviates from greedy only for a real gain.
 - **Placement.** Tilted layouts: placements weighted per cell so ship occupancy hits a target
   between uniform and inverted centre bias. Shooters that assume uniform placement hunt the
-  centre first and pay for it; the tilt is chosen with the placement-game matrix so a shooter
-  that expects it cannot exploit it much.
+  centre first and pay for it. A single game uses an equilibrium mix of tilts, computed from
+  the placement-game matrix, so even a shooter that expects it cannot exploit it.
+- **Learning across a match.** The shooter learns the opponent's placement habits by model
+  selection (uniform, tilt family, shrunk per-cell occupancy, each scored on predicting the next
+  revealed fleet), so it gains against biased placers and loses nothing against uniform ones.
+  The placer tracks where the opponent looks last and a bandit decides how hard to exploit it,
+  drifting back to the equilibrium against opponents that adapt.
 
 ## Rules (standard)
 
@@ -77,3 +82,14 @@ Mean shots to sink a uniformly placed fleet (10,000+ games):
 | density (classic probability density) | 44.8 |
 | greedy (exact posterior) | 44.5 |
 | broadside (exact posterior + endgame rollouts) | 44.3 |
+
+Head-to-head (`broadside` with its own placement, matches of 100 games so both sides may learn):
+
+| Opponent | Broadside wins |
+|---|---|
+| density, uniform placement | 64.5% |
+| density, edge-heavy placement | 72.0% |
+| density, no-touch placement | 65.3% |
+| greedy exact shooter, uniform placement | 60.6% |
+| broadside without learning, uniform placement | 61.1% |
+| broadside (self-play) | 49.9% |
