@@ -37,6 +37,7 @@
   --panel: #12222f; --good: #4cc08a; color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { min-height: 100%; }
 body {
   background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.45;
@@ -443,6 +444,7 @@ $("heat").addEventListener("change", render);
 // ---------- boot ----------
 (async () => {
   try {
+    if (WASM_B64.startsWith("__")) throw new Error("this is the page's source without the engine. Run web/build.sh and open web/dist/broadside.html");
     const bytes = Uint8Array.from(atob(WASM_B64), ch => ch.charCodeAt(0));
     const { instance } = await WebAssembly.instantiate(bytes, {});
     E = instance.exports;
@@ -450,7 +452,7 @@ $("heat").addEventListener("change", render);
   } catch (err) {
     $("msg").innerHTML = "";
     const box = Object.assign(document.createElement("div"), { className: "error" });
-    box.textContent = "This browser could not start the engine (WebAssembly is blocked or unsupported here): " + err.message;
+    box.textContent = "The engine could not start: " + err.message + ".";
     $("msg").replaceWith(box);
   }
 })();
