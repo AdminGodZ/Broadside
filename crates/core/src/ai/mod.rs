@@ -69,7 +69,7 @@ impl Placer for SpacedPlacer {
 
 pub const SHOOTERS: &[&str] = &[
     "broadside",
-    "broadside:KEY=N,... (exact, cands, solve, nodes, leaf, deep, afloat, samples)",
+    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples)",
     "greedy",
     "density",
     "NAME@tiltA (expects tiltA placement)",
@@ -108,16 +108,13 @@ fn engine(name: &str) -> Option<engine::Broadside> {
             "cands" => s.candidates = v,
             "solve" => s.solve_worlds = v,
             "nodes" => s.solve_nodes = v as u64,
-            "leaf" => s.leaf_worlds = v,
             "deep" => s.deep_worlds = v,
             "afloat" => s.max_afloat = v,
             "samples" => s.samples = v,
             _ => return None,
         }
     }
-    let valid = s.candidates >= 1
-        && s.solve_worlds.max(s.leaf_worlds) <= 64
-        && (s.max_afloat == 0 || s.samples >= 2);
+    let valid = s.candidates >= 1 && s.solve_worlds <= 64 && (s.max_afloat == 0 || s.samples >= 2);
     valid.then_some(e)
 }
 

@@ -10,11 +10,10 @@
 //! Values are total shots to finish, summed over worlds by weight. With a
 //! uniform prior the weights are integers and all arithmetic is exact.
 //!
-//! Three policies continue a line of play, strongest where it is affordable:
-//! - optimal: small positions are solved outright (`Exact`);
-//! - improved: medium positions try the likeliest cells and keep the best
-//!   under greedy continuation;
-//! - greedy: fire at the likeliest cell.
+//! With few worlds left the position is solved outright (`Exact`). Otherwise
+//! the likeliest shots are compared by playing each line to the end, greedily
+//! (the likeliest cell every time) or, optionally and at a price, by trying
+//! the likeliest cells again at each later position of moderate size.
 
 use super::engine::Search;
 use super::placement::Tilt;
@@ -155,8 +154,8 @@ fn ranked(occ: &[f64; CELLS], or: u128) -> Vec<usize> {
     cells
 }
 
-/// Results by position: (tags of the surviving worlds XORed, hits standing).
-type Table<V> = HashMap<(u128, u128), V, BuildHasherDefault<Mix>>;
+/// Values by position: (tags of the surviving worlds XORed, hits standing).
+type Table = HashMap<(u128, u128), f64, BuildHasherDefault<Mix>>;
 
 pub struct Tree<'a> {
     worlds: &'a [World],
@@ -165,22 +164,16 @@ pub struct Tree<'a> {
     all: Vec<u128>,
     weight: Vec<f64>,
     cfg: Search,
-    /// Positions the exact solver may still open for this decision.
-    budget: u64,
     /// A random tag per world. Lines of play that fire the same shots in a
     /// different order reach the same position; keying positions by their
-    /// worlds lets every table below recognize them.
+    /// worlds lets the tables below recognize them.
     tags: Vec<u128>,
-    /// Solved positions: optimal total shots and first shot.
-    solved: Table<(f64, u8)>,
     /// `value` of positions, without and with improvement.
-    values: [Table<f64>; 2],
+    values: [Table; 2],
     /// Scratch for `split`: the outcome per world.
     outcomes: Vec<u8>,
 }
 
-/// The exact solver's budget for a whole decision, in solves' worth.
-const SOLVE_ATTEMPTS: u64 = 16;
 /// Smaller positions are quicker to evaluate than to look up.
 const TABLE_MIN: usize = 4;
 /// Positions kept per table (about 50 bytes each).
@@ -195,9 +188,7 @@ impl<'a> Tree<'a> {
             all: worlds.iter().map(|w| w.all).collect(),
             weight: worlds.iter().map(|w| w.weight).collect(),
             cfg,
-            budget: cfg.solve_nodes.saturating_mul(SOLVE_ATTEMPTS),
             tags: (0..worlds.len()).map(tag).collect(),
-            solved: Table::default(),
             values: Default::default(),
             outcomes: vec![0; worlds.len()],
         }
@@ -273,7 +264,7 @@ impl<'a> Tree<'a> {
         if s.settled().is_some() || s.forced != 0 {
             return (if s.forced != 0 { s.forced } else { s.or }).trailing_zeros() as usize;
         }
-        if let Some((_, cell)) = self.solve(&root, hits, self.cfg.solve_worlds) {
+        if let Some((_, cell)) = self.solve(hits) {
             return cell;
         }
         let occ = occupancy(self.worlds.iter(), hits);
@@ -339,7 +330,7 @@ impl<'a> Tree<'a> {
     /// Total shots to finish from the worlds in `x`, by the strongest policy
     /// the position's size allows. `y` and `z` are scratch of the same length;
     /// all three are overwritten. With `improve` off, play is greedy (or
-    /// optimal where solved) and `z` stays untouched.
+    /// and `z` stays untouched.
     fn value(
         &mut self,
         x: &mut [u32],
@@ -358,17 +349,14 @@ impl<'a> Tree<'a> {
         {
             return v;
         }
-        let v = match self.solve(x, hits, self.cfg.leaf_worlds) {
-            Some((v, _)) => v,
-            None => self.play_on(x, y, z, hits, improve, &s),
-        };
+        let v = self.play_on(x, y, z, hits, improve, &s);
         if x.len() >= TABLE_MIN && self.values[improve as usize].len() < TABLE_MAX {
             self.values[improve as usize].insert(key, v);
         }
         v
     }
 
-    /// `value` of a position that is neither settled nor solved.
+    /// `value` of a position that is not settled.
     fn play_on(
         &mut self,
         x: &mut [u32],
@@ -432,22 +420,19 @@ impl<'a> Tree<'a> {
         total
     }
 
-    /// Optimal total shots and first shot for a set of at most `limit`
-    /// worlds, if the solver finishes within its budget.
-    fn solve(&mut self, idx: &[u32], hits: u128, limit: usize) -> Option<(f64, usize)> {
-        let n = idx.len();
-        if n > limit.min(64) || self.budget == 0 {
+    /// Optimal total shots and first shot, if there are few enough worlds
+    /// and the solver finishes within its budget.
+    fn solve(&self, hits: u128) -> Option<(f64, usize)> {
+        let n = self.worlds.len();
+        if n > self.cfg.solve_worlds.min(64) {
             return None;
         }
         let mut e = Exact {
-            worlds: idx.iter().map(|&i| self.worlds[i as usize]).collect(),
-            tags: idx.iter().map(|&i| self.tags[i as usize]).collect(),
-            memo: &mut self.solved,
-            budget: self.budget.min(self.cfg.solve_nodes),
+            worlds: self.worlds,
+            memo: HashMap::default(),
+            budget: self.cfg.solve_nodes,
         };
-        let granted = e.budget;
         let r = e.solve(u64::MAX >> (64 - n), hits);
-        self.budget -= granted - e.budget;
         r.map(|(v, c)| (v, c as usize))
     }
 }
@@ -455,9 +440,8 @@ impl<'a> Tree<'a> {
 /// Exact solver: the least expected shots from a small set of worlds, by
 /// memoized search over (surviving worlds, hits standing).
 struct Exact<'a> {
-    worlds: Vec<World>,
-    tags: Vec<u128>,
-    memo: &'a mut Table<(f64, u8)>,
+    worlds: &'a [World],
+    memo: HashMap<(u64, u128), (f64, u8), BuildHasherDefault<Mix>>,
     /// Positions that may still be opened.
     budget: u64,
 }
@@ -474,7 +458,7 @@ impl Exact<'_> {
         if let Some(v) = s.settled() {
             return Some((v, s.or.trailing_zeros() as u8));
         }
-        let key = (Bits(set as u128).fold(0, |a, i| a ^ self.tags[i]), hits);
+        let key = (set, hits);
         if let Some(&v) = self.memo.get(&key) {
             return Some(v);
         }
@@ -571,7 +555,7 @@ mod tests {
     fn cfg(solve_worlds: usize, deep_worlds: usize) -> Search {
         Search {
             solve_worlds,
-            leaf_worlds: solve_worlds,
+            solve_nodes: 100_000,
             deep_worlds,
             ..Broadside::new().search
         }
@@ -675,8 +659,7 @@ mod tests {
 
     fn solved(k: &Knowledge) -> (f64, usize) {
         let w = worlds(k, &Posterior::compute(k), 64, None).unwrap();
-        let idx: Vec<u32> = (0..w.len() as u32).collect();
-        Tree::new(&w, cfg(64, 0)).solve(&idx, k.hits.0, 64).unwrap()
+        Tree::new(&w, cfg(64, 0)).solve(k.hits.0).unwrap()
     }
 
     #[test]
@@ -814,7 +797,10 @@ mod tests {
             };
             let greedy = value(0, 0);
             assert!(value(0, 300) <= greedy, "{k:?}");
-            assert!(value(16, 0) <= greedy, "{k:?}");
+            // Where the solver gets through, nothing beats it.
+            if let Some((best, _)) = Tree::new(&w, cfg(64, 0)).solve(k.hits.0) {
+                assert!(best <= value(0, 300), "{k:?}");
+            }
         }
     }
 }

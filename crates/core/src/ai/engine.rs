@@ -32,9 +32,6 @@ pub struct Search {
     pub solve_worlds: usize,
     /// ...if the solver gets there by opening at most this many positions.
     pub solve_nodes: u64,
-    /// Positions this small are also solved wherever a searched line of play
-    /// reaches them, so lines are judged by optimal play at their ends.
-    pub leaf_worlds: usize,
     /// Lines of play through positions with at most this many placements
     /// continue with the best of the likeliest cells instead of greedily.
     pub deep_worlds: usize,
@@ -166,11 +163,10 @@ impl Broadside {
         Self {
             threads: 1,
             search: Search {
-                exact_limit: 30_000,
+                exact_limit: 200_000,
                 candidates: 6,
-                solve_worlds: 24,
-                solve_nodes: 20_000,
-                leaf_worlds: 8,
+                solve_worlds: 16,
+                solve_nodes: 2_000,
                 deep_worlds: 0,
                 max_afloat: 0,
                 samples: 48,
