@@ -44,8 +44,35 @@ pub fn worlds(
     limit: usize,
     prior: Option<&Tilt>,
 ) -> Option<Vec<World>> {
-    let mut out: Vec<World> = p
-        .enumerate_afloat(k, limit)?
+    Some(build(k, p.enumerate_afloat(k, limit)?, prior))
+}
+
+/// `n` worlds drawn from the posterior `p` of `k`, repeats merged.
+pub fn sampled(
+    k: &Knowledge,
+    p: &Posterior,
+    n: usize,
+    prior: Option<&Tilt>,
+    rng: &mut Rng,
+) -> Vec<World> {
+    let mut seen: HashMap<[Option<u8>; SHIPS], u64> = HashMap::new();
+    for slots in p.sample_afloat(k, n, rng) {
+        *seen.entry(slots).or_insert(0) += 1;
+    }
+    let mut draws: Vec<_> = seen.into_iter().collect();
+    // Hash order is random per process: fix it, so choices repeat.
+    draws.sort_unstable();
+    build(k, draws, prior)
+}
+
+/// Worlds from placements of the afloat ships and how many layouts (or
+/// draws) stand behind each, weighted by the prior.
+fn build(
+    k: &Knowledge,
+    placements: Vec<([Option<u8>; SHIPS], u64)>,
+    prior: Option<&Tilt>,
+) -> Vec<World> {
+    let mut out: Vec<World> = placements
         .into_iter()
         .map(|(slots, layouts)| {
             let mut ships = [0u128; SHIPS];
@@ -75,7 +102,7 @@ pub fn worlds(
         }
         out.retain(|w| w.weight > 0.0);
     }
-    Some(out)
+    out
 }
 
 /// Outcomes of a shot: miss, hit, or sinking one of the ships.
@@ -270,37 +297,7 @@ impl<'a> Tree<'a> {
         let occ = occupancy(self.worlds.iter(), hits);
         let mut cands = ranked(&occ, s.or);
         cands.truncate(self.cfg.candidates.max(1));
-        let values: Vec<f64> = if threads <= 1 || cands.len() == 1 {
-            cands.iter().map(|&x| self.after(x, hits, &root)).collect()
-        } else {
-            // A tree of its own per thread: the tables are not shared, but
-            // a position's value does not depend on them.
-            let (worlds, cfg, next) = (self.worlds, self.cfg, AtomicUsize::new(0));
-            let mut values = vec![0.0; cands.len()];
-            thread::scope(|scope| {
-                let workers: Vec<_> = (0..threads.min(cands.len()))
-                    .map(|_| {
-                        scope.spawn(|| {
-                            let mut tree = Tree::new(worlds, cfg);
-                            let mut done = Vec::new();
-                            loop {
-                                let i = next.fetch_add(1, Ordering::Relaxed);
-                                let Some(&x) = cands.get(i) else {
-                                    return done;
-                                };
-                                done.push((i, tree.after(x, hits, &root)));
-                            }
-                        })
-                    })
-                    .collect();
-                for w in workers {
-                    for (i, v) in w.join().unwrap() {
-                        values[i] = v;
-                    }
-                }
-            });
-            values
-        };
+        let values = self.judge(&cands, threads, &|tree, x| tree.after(x, hits, &root));
         let mut best = (f64::INFINITY, 0);
         for (&x, v) in cands.iter().zip(values) {
             // Leave the likeliest cell only for a real gain.
@@ -309,6 +306,156 @@ impl<'a> Tree<'a> {
             }
         }
         best.1
+    }
+
+    /// The shot to fire when finishing in `t` more shots (this one
+    /// included) costs `cost[t]` per unit of weight, e.g. the chance that
+    /// the opponent gets there first. Lines are played on greedily.
+    pub fn choose_for(&mut self, hits: u128, threads: usize, cost: &[f64]) -> usize {
+        let s = Summary::of(self.worlds.iter(), hits);
+        if s.settled().is_some() || s.forced != 0 {
+            return (if s.forced != 0 { s.forced } else { s.or }).trailing_zeros() as usize;
+        }
+        let occ = occupancy(self.worlds.iter(), hits);
+        let mut cands = ranked(&occ, s.or);
+        cands.truncate(self.cfg.candidates.max(1));
+        let values = self.judge(&cands, threads, &|tree, x| {
+            let t = tree.finish(x, hits);
+            t.iter()
+                .zip(&tree.weight)
+                .map(|(&t, w)| w * cost[t as usize])
+                .sum()
+        });
+        let mut best = (f64::INFINITY, 0);
+        for (&x, v) in cands.iter().zip(values) {
+            if v < best.0 - 1e-9 * s.weight {
+                best = (v, x);
+            }
+        }
+        best.1
+    }
+
+    /// The shot to fire among `cands` (the default first) when the worlds
+    /// are a sample: another cell must save shots by a clear margin, two
+    /// standard errors of the paired difference over the worlds.
+    pub fn choose_sampled(&mut self, hits: u128, threads: usize, cands: &[usize]) -> usize {
+        let times = self.judge(cands, threads, &|tree, x| tree.finish(x, hits));
+        let w = &self.weight;
+        let (n, total) = (w.len() as f64, w.iter().sum::<f64>());
+        let mut best = (0.0, cands[0]);
+        for (&x, t) in cands.iter().zip(&times).skip(1) {
+            let d: Vec<f64> = times[0]
+                .iter()
+                .zip(t)
+                .map(|(&a, &b)| a as f64 - b as f64)
+                .collect();
+            let mean = d.iter().zip(w).map(|(d, w)| d * w).sum::<f64>() / total;
+            let var = n / (n - 1.0).max(1.0)
+                * d.iter()
+                    .zip(w)
+                    .map(|(d, w)| (w * (d - mean)).powi(2))
+                    .sum::<f64>()
+                / (total * total);
+            if mean > 2.0 * var.sqrt() + 1e-9 && mean > best.0 {
+                best = (mean, x);
+            }
+        }
+        best.1
+    }
+
+    /// `f(tree, x)` for every candidate `x`; with `threads` above 1 in
+    /// parallel, a tree of its own per thread (the tables are not shared,
+    /// but a position's value does not depend on them).
+    fn judge<T: Send>(
+        &mut self,
+        cands: &[usize],
+        threads: usize,
+        f: &(dyn Fn(&mut Tree, usize) -> T + Sync),
+    ) -> Vec<T> {
+        if threads <= 1 || cands.len() == 1 {
+            return cands.iter().map(|&x| f(self, x)).collect();
+        }
+        let (worlds, cfg, next) = (self.worlds, self.cfg, AtomicUsize::new(0));
+        let mut values: Vec<Option<T>> = cands.iter().map(|_| None).collect();
+        thread::scope(|scope| {
+            let workers: Vec<_> = (0..threads.min(cands.len()))
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut tree = Tree::new(worlds, cfg);
+                        let mut done = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(&x) = cands.get(i) else {
+                                return done;
+                            };
+                            done.push((i, f(&mut tree, x)));
+                        }
+                    })
+                })
+                .collect();
+            for w in workers {
+                for (i, v) in w.join().unwrap() {
+                    values[i] = Some(v);
+                }
+            }
+        });
+        values.into_iter().map(Option::unwrap).collect()
+    }
+
+    /// Shots each world takes to finish, this shot at `x` included, when
+    /// play goes on greedily. By world.
+    fn finish(&mut self, x: usize, hits: u128) -> Vec<u8> {
+        let n = self.worlds.len();
+        let mut t = vec![0u8; n];
+        let (mut a, mut b): (Vec<u32>, Vec<u32>) = ((0..n as u32).collect(), vec![0; n]);
+        let cuts = self.split(x, hits, &a, &mut b);
+        for o in 0..OUTCOMES {
+            let r = cuts[o]..cuts[o + 1];
+            if !r.is_empty() {
+                let h = advance(o, x, hits);
+                self.times(&mut b[r.clone()], &mut a[r], h, 1, &mut t);
+            }
+        }
+        t
+    }
+
+    /// Writes to `t` the shots each world in `x` takes to finish under
+    /// greedy play, `depth` shots already fired. `y` is scratch.
+    fn times(&mut self, x: &mut [u32], y: &mut [u32], hits: u128, depth: u8, t: &mut [u8]) {
+        let (s, _) = self.scan(x, hits);
+        if s.and == s.or {
+            let done = depth + s.or.count_ones() as u8;
+            for &i in x.iter() {
+                t[i as usize] = done;
+            }
+            return;
+        }
+        let cell = self.greedy_cell(x, hits, &s);
+        let cuts = self.split(cell, hits, x, y);
+        for o in 0..OUTCOMES {
+            let r = cuts[o]..cuts[o + 1];
+            if !r.is_empty() {
+                let h = advance(o, cell, hits);
+                self.times(&mut y[r.clone()], &mut x[r], h, depth + 1, t);
+            }
+        }
+    }
+
+    /// The greedy shot from the worlds in `x`: a forced cell, else the
+    /// likeliest, the lowest on ties (`ranked`'s first).
+    fn greedy_cell(&self, x: &[u32], hits: u128, s: &Summary) -> usize {
+        if s.forced != 0 {
+            return s.forced.trailing_zeros() as usize;
+        }
+        let mut occ = [0.0; CELLS];
+        for &i in x {
+            for c in Bits(self.all[i as usize] & !hits) {
+                occ[c] += self.weight[i as usize];
+            }
+        }
+        Bits(s.or).fold(s.or.trailing_zeros() as usize, |best, c| {
+            if occ[c] > occ[best] { c } else { best }
+        })
     }
 
     /// Total shots to finish after firing at `x`, less the shot itself.
@@ -366,16 +513,14 @@ impl<'a> Tree<'a> {
         improve: bool,
         s: &Summary,
     ) -> f64 {
-        let cell = if s.forced != 0 {
-            s.forced.trailing_zeros() as usize
-        } else {
+        let cell = if s.forced == 0 && improve && x.len() <= self.cfg.deep_worlds {
             let mut occ = [0.0; CELLS];
             for &i in x.iter() {
                 for c in Bits(self.all[i as usize] & !hits) {
                     occ[c] += self.weight[i as usize];
                 }
             }
-            if improve && x.len() <= self.cfg.deep_worlds {
+            {
                 let mut best = (f64::INFINITY, 0);
                 for c in ranked(&occ, s.or)
                     .into_iter()
@@ -395,12 +540,9 @@ impl<'a> Tree<'a> {
                     }
                 }
                 best.1
-            } else {
-                // The likeliest cell, the lowest on ties: `ranked`'s first.
-                Bits(s.or).fold(s.or.trailing_zeros() as usize, |best, c| {
-                    if occ[c] > occ[best] { c } else { best }
-                })
             }
+        } else {
+            self.greedy_cell(x, hits, s)
         };
         let cuts = self.split(cell, hits, x, y);
         let mut total = s.weight;
@@ -781,6 +923,14 @@ mod tests {
                     }
                 }
                 assert_eq!(by_tree, by_rollout, "cell {x} in {k:?}");
+                // Shot by shot, world by world, play goes the same way.
+                let by_world: f64 = tree
+                    .finish(x, k.hits.0)
+                    .iter()
+                    .zip(&w)
+                    .map(|(&t, w)| t as f64 * w.weight)
+                    .sum();
+                assert_eq!(by_world, by_rollout, "cell {x} in {k:?}");
             }
         }
     }

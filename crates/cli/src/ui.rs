@@ -210,6 +210,7 @@ pub fn play(
             }
         }
         you_first = true;
+        engine.race(&engine_layout, &you);
         let cell = engine.choose(&it, &mut rng);
         let o = my_board.fire(cell);
         it.record(cell, o);

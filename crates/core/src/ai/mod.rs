@@ -19,6 +19,10 @@ pub trait Shooter: Send {
     /// Threads a single decision may use (1 unless told otherwise:
     /// simulations run one game per thread instead).
     fn set_threads(&mut self, _threads: usize) {}
+    /// In a game against an opponent, before each shot: our own fleet and
+    /// what the opponent knows of it. The opponent fires next after us, so
+    /// whoever needs fewer shots from here wins, we on ties.
+    fn race(&mut self, _fleet: &Layout, _against: &Knowledge) {}
 }
 
 /// Chooses a fleet layout.
@@ -69,7 +73,7 @@ impl Placer for SpacedPlacer {
 
 pub const SHOOTERS: &[&str] = &[
     "broadside",
-    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples)",
+    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples, race, spread)",
     "greedy",
     "density",
     "NAME@tiltA (expects tiltA placement)",
@@ -111,6 +115,8 @@ fn engine(name: &str) -> Option<engine::Broadside> {
             "deep" => s.deep_worlds = v,
             "afloat" => s.max_afloat = v,
             "samples" => s.samples = v,
+            "race" => s.race = v,
+            "spread" => s.spread = v,
             _ => return None,
         }
     }

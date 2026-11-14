@@ -87,25 +87,61 @@ impl Stats {
     }
 }
 
+/// Fires `shooter`'s next shot at `board`. Panics if it fires off the board
+/// or at a cell twice: a score from an illegal game would mean nothing.
+fn shoot(shooter: &mut dyn Shooter, board: &mut Board, k: &mut Knowledge, rng: &mut Rng) -> usize {
+    let cell = shooter.choose(k, rng);
+    assert!(
+        cell < CELLS && k.unknown().has(cell),
+        "{} fired at {cell}: off the board or already shot",
+        shooter.name()
+    );
+    k.record(cell, board.fire(cell));
+    cell
+}
+
 /// Plays `shooter` against `layout` to the end; returns every shot in order.
-/// Panics if the shooter fires off the board or at a cell twice: a score
-/// from an illegal game would mean nothing.
 pub fn play_game(shooter: &mut dyn Shooter, layout: Layout, rng: &mut Rng) -> Vec<usize> {
     let mut board = Board::new(layout);
     let mut k = Knowledge::new();
     let mut shots = Vec::with_capacity(64);
     while !k.won() {
-        let cell = shooter.choose(&k, rng);
-        assert!(
-            cell < CELLS && k.unknown().has(cell),
-            "{} fired at {cell}: off the board or already shot",
-            shooter.name()
-        );
-        let outcome = board.fire(cell);
-        k.record(cell, outcome);
-        shots.push(cell);
+        shots.push(shoot(shooter, &mut board, &mut k, rng));
     }
     shots
+}
+
+/// One side of a game between two shooters.
+struct Side<'a> {
+    shooter: &'a mut dyn Shooter,
+    /// Its own fleet, and the opponent's fleet it fires at.
+    fleet: Layout,
+    board: Board,
+    k: Knowledge,
+    shots: Vec<usize>,
+    rng: Rng,
+}
+
+/// Two shooters fire at each other's fleet in turn, `first` moving first,
+/// each told the race before every shot. Both play to the end, the loser
+/// after the game is decided too; returns every shot of each side.
+fn race_game(mut sides: [Side; 2], first: usize) -> [Vec<usize>; 2] {
+    let mut turn = first;
+    while sides.iter().any(|s| !s.k.won()) {
+        let (a, b) = sides.split_at_mut(1);
+        let (me, them) = if turn == 0 {
+            (&mut a[0], &b[0])
+        } else {
+            (&mut b[0], &a[0])
+        };
+        if !me.k.won() {
+            me.shooter.race(&me.fleet, &them.k);
+            let cell = shoot(me.shooter, &mut me.board, &mut me.k, &mut me.rng);
+            me.shots.push(cell);
+        }
+        turn ^= 1;
+    }
+    sides.map(|s| s.shots)
 }
 
 /// Shots `shooter` needs to sink `layout`.
@@ -254,8 +290,8 @@ impl DuelResult {
 /// layout, and placers see the shots fired at their own fleet before the game
 /// ended. `match_len = 1` means fresh players every game.
 ///
-/// Shooters alternate shots and never see the other side, so a game is
-/// decided by comparing shots-to-win, the first mover winning ties. The first
+/// Shooters alternate shots and are told before each how far the other side
+/// has got. The first to sink the other's fleet wins. The first
 /// move alternates within a match and between matches, so neither half of a
 /// match favours a side.
 pub fn duel(
@@ -283,10 +319,29 @@ pub fn duel(
                 }
                 let la = pa.place(&mut Rng::stream(seed, 4 * i));
                 let lb = pb.place(&mut Rng::stream(seed, 4 * i + 1));
-                let shots_a = play_game(sa.as_mut(), lb, &mut Rng::stream(seed, 4 * i + 2));
-                let shots_b = play_game(sb.as_mut(), la, &mut Rng::stream(seed, 4 * i + 3));
-                let (na, nb) = (shots_a.len(), shots_b.len());
                 let a_first = (m + g).is_multiple_of(2);
+                let [shots_a, shots_b] = race_game(
+                    [
+                        Side {
+                            shooter: sa.as_mut(),
+                            fleet: la,
+                            board: Board::new(lb),
+                            k: Knowledge::new(),
+                            shots: Vec::with_capacity(64),
+                            rng: Rng::stream(seed, 4 * i + 2),
+                        },
+                        Side {
+                            shooter: sb.as_mut(),
+                            fleet: lb,
+                            board: Board::new(la),
+                            k: Knowledge::new(),
+                            shots: Vec::with_capacity(64),
+                            rng: Rng::stream(seed, 4 * i + 3),
+                        },
+                    ],
+                    if a_first { 0 } else { 1 },
+                );
+                let (na, nb) = (shots_a.len(), shots_b.len());
                 let a_won = na < nb || (na == nb && a_first);
                 // The game stops at the winner's last shot: the loser has
                 // fired as many shots, or one fewer if the winner moved first.

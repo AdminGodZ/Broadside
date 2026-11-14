@@ -14,10 +14,9 @@ use super::placement::Tilt;
 use super::search::{self, Tree};
 use crate::bitboard::{Bits, CELLS};
 use crate::fleet::{LENGTHS, SEGMENTS, SHIPS, Ship, THROUGH};
-use crate::game::{Knowledge, Outcome};
+use crate::game::{Knowledge, Layout, Outcome};
 use crate::posterior::Posterior;
 use crate::rng::Rng;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
@@ -35,11 +34,18 @@ pub struct Search {
     /// Lines of play through positions with at most this many placements
     /// continue with the best of the likeliest cells instead of greedily.
     pub deep_worlds: usize,
-    /// Positions too large to list: rollouts on sampled layouts while at most
-    /// this many ships are afloat (0 = never).
+    /// Positions too large to list: search over sampled placements while at
+    /// most this many ships are afloat (0 = never).
     pub max_afloat: usize,
-    /// Sampled layouts per decision.
+    /// Placements sampled per decision.
     pub samples: usize,
+    /// Against an opponent: rollouts of its play that estimate how many
+    /// shots it still needs; the search then plays for the win, not for the
+    /// fewest shots (0 = ignore the race).
+    pub race: usize,
+    /// How far, in tenths of a shot, the opponent may stray from the
+    /// rollouts' estimate.
+    pub spread: usize,
 }
 
 pub struct Broadside {
@@ -50,6 +56,8 @@ pub struct Broadside {
     /// Learns the opponent's habits from revealed layouts, replacing `prior`
     /// (None = keep `prior` fixed).
     pub learner: Option<Learner>,
+    /// In a game against an opponent: our fleet and what it knows of it.
+    pub race: Option<(Layout, Knowledge)>,
 }
 
 /// Learns the opponent's placement habits by model selection.
@@ -169,10 +177,13 @@ impl Broadside {
                 solve_nodes: 2_000,
                 deep_worlds: 0,
                 max_afloat: 0,
-                samples: 48,
+                samples: 4000,
+                race: 0,
+                spread: 15,
             },
             prior: None,
             learner: Some(Learner::default()),
+            race: None,
         }
     }
 
@@ -293,6 +304,7 @@ fn certain_cells(p: &Posterior, k: &Knowledge) -> (u128, Option<usize>) {
     (certain, forced)
 }
 
+#[cfg(test)]
 /// The base policy's shot: a cell one ship certainly holds, else a certain
 /// hit, else the likeliest cell; lowest cell on ties.
 fn base_move(k: &Knowledge, p: &Posterior, prior: Option<&Tilt>) -> usize {
@@ -307,8 +319,10 @@ fn base_move(k: &Knowledge, p: &Posterior, prior: Option<&Tilt>) -> usize {
 /// The base policy's shot per position. Rollouts from one decision keep
 /// meeting the same positions: before their layouts tell them apart, and
 /// where two lines fire the same shots in a different order.
-pub(crate) type BaseMoves = HashMap<Knowledge, usize>;
+#[cfg(test)]
+pub(crate) type BaseMoves = std::collections::HashMap<Knowledge, usize>;
 
+#[cfg(test)]
 /// Shots to finish the game from `k`, firing `first` and then following the
 /// base policy, when the afloat ships truly lie at `truth` (slot per ship).
 pub(crate) fn rollout(
@@ -341,63 +355,70 @@ pub(crate) fn rollout(
     }
 }
 
-impl Broadside {
-    /// Rollout search against layouts sampled from the posterior, for
-    /// positions with too many placements to list. `cands`: cells to compare,
-    /// the base policy's own move first.
-    fn sampled_search(
-        &self,
-        k: &Knowledge,
-        p: &Posterior,
-        cands: &[usize],
-        rng: &mut Rng,
-    ) -> usize {
-        let prior = self.prior.as_deref();
-        let unknown = k.unknown().0;
-        let futures = p.sample_afloat(k, self.search.samples, rng);
-        // The samples follow the uniform posterior. Under a prior each
-        // counts by its prior weight, which only its unshot cells set apart.
-        let logs: Vec<f64> = futures
-            .iter()
-            .map(|t| {
-                let all = (0..SHIPS)
-                    .filter_map(|s| t[s].map(|slot| SEGMENTS[LENGTHS[s]][slot as usize]))
-                    .fold(0u128, |a, m| a | m);
-                prior.map_or(0.0, |pr| Bits(all & unknown).map(|c| pr.theta[c]).sum())
-            })
-            .collect();
-        let top = logs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let w: Vec<f64> = logs.iter().map(|l| (l - top).exp()).collect();
-        let (n, total) = (w.len() as f64, w.iter().sum::<f64>());
+/// Shots the opponent still needs from what it knows, `k`, against our
+/// fleet, playing greedily (random ties).
+fn opponent_rollout(fleet: &Layout, k: &Knowledge, rng: &mut Rng) -> usize {
+    let mut k = *k;
+    let mut shots = 0;
+    while !k.won() {
+        let p = Posterior::cached(&k, 1);
+        let (certain, forced) = certain_cells(&p, &k);
+        let pool = if certain != 0 { certain } else { k.unknown().0 };
+        let cell = forced.unwrap_or_else(|| best_random(pool, &cell_scores(&p, None, &k), rng));
+        let outcome = match fleet.ship_at(cell) {
+            None => Outcome::Miss,
+            Some(s) if fleet.ship(s).0 & !(k.hits.0 | 1 << cell) == 0 => Outcome::Sunk(s),
+            Some(_) => Outcome::Hit,
+        };
+        k.record(cell, outcome);
+        shots += 1;
+    }
+    shots
+}
 
-        let mut seen = BaseMoves::new();
-        let base: Vec<f64> = futures
-            .iter()
-            .map(|t| rollout(k, cands[0], t, prior, &mut seen) as f64)
-            .collect();
-        let mut best = (0.0, cands[0]); // (expected shots saved vs base, cell)
-        for &x in &cands[1..] {
-            // Paired differences against the base move, same futures.
-            let d: Vec<f64> = futures
-                .iter()
-                .zip(&base)
-                .map(|(t, b)| b - rollout(k, x, t, prior, &mut seen) as f64)
+impl Broadside {
+    /// `lose[t]`: the chance that the opponent sinks us first if we need
+    /// `t` more shots, this one included; `None` unless that depends on how
+    /// we play from here.
+    fn race_odds(&self, k: &Knowledge, rng: &mut Rng) -> Option<Vec<f64>> {
+        let (fleet, against) = self.race.as_ref()?;
+        let n = self.search.race;
+        if n == 0 {
+            return None;
+        }
+        // P(U = u) for the opponent's remaining shots U, each rollout blurred
+        // over the counts it can still reach.
+        let floor = 17 - against.hits.count() as usize;
+        let mut dist = vec![0.0; CELLS + 2];
+        let sigma = self.search.spread as f64 / 10.0;
+        for _ in 0..n {
+            let u = opponent_rollout(fleet, against, rng);
+            if sigma == 0.0 || u == 0 {
+                dist[u] += 1.0;
+                continue;
+            }
+            let w: Vec<f64> = (floor..=CELLS)
+                .map(|v| (-((v as f64 - u as f64) / sigma).powi(2) / 2.0).exp())
                 .collect();
-            let mean = d.iter().zip(&w).map(|(d, w)| d * w).sum::<f64>() / total;
-            // Sampled futures are noisy: only leave the base move for a
-            // significant gain, or the search just chases sampling noise.
-            // (Standard error of a weighted mean; s/sqrt(n) for equal weights.)
-            let var = n / (n - 1.0)
-                * d.iter()
-                    .zip(&w)
-                    .map(|(d, w)| (w * (d - mean)).powi(2))
-                    .sum::<f64>()
-                / (total * total);
-            if mean > 2.0 * var.sqrt() + 1e-9 && mean > best.0 {
-                best = (mean, x);
+            let z: f64 = w.iter().sum();
+            for (v, w) in (floor..=CELLS).zip(w) {
+                dist[v] += w / z;
             }
         }
-        best.1
+        let mut lose = vec![0.0; CELLS + 2];
+        for t in 1..lose.len() {
+            lose[t] = lose[t - 1] + dist[t - 1] / n as f64;
+        }
+        // Between the fewest shots we could need and the most.
+        let (least, most) = (17 - k.hits.count() as usize, k.unknown().count() as usize);
+        let live = lose[least] < 1.0 - 1e-3 && lose[most] > 1e-3;
+        // Fewer shots still break ties: they win against any opponent.
+        live.then(|| {
+            lose.iter()
+                .enumerate()
+                .map(|(t, l)| l + 1e-3 * t as f64)
+                .collect()
+        })
     }
 }
 
@@ -410,6 +431,10 @@ impl Shooter for Broadside {
 
     fn set_threads(&mut self, threads: usize) {
         self.threads = threads.max(1);
+    }
+
+    fn race(&mut self, fleet: &Layout, against: &Knowledge) {
+        self.race = Some((*fleet, *against));
     }
 
     fn name(&self) -> String {
@@ -432,9 +457,18 @@ impl Shooter for Broadside {
             return c;
         }
         let prior = self.prior.as_deref();
-        let s = &self.search;
+        let s = self.search;
         if let Some(worlds) = search::worlds(k, &p, s.exact_limit, prior) {
-            return Tree::new(&worlds, *s).choose(k.hits.0, self.threads);
+            let mut tree = Tree::new(&worlds, s);
+            // Its own random stream (as below): whatever the search draws
+            // must not shift the tie-breaks of later moves.
+            let race = (self.race.is_some() && s.race > 0)
+                .then(|| self.race_odds(k, &mut Rng::new(rng.next_u64())))
+                .flatten();
+            return match race {
+                Some(lose) => tree.choose_for(k.hits.0, self.threads, &lose),
+                None => tree.choose(k.hits.0, self.threads),
+            };
         }
         let scores = cell_scores(&p, prior, k);
         // Greedy takes a certain hit before anything else.
@@ -444,12 +478,11 @@ impl Shooter for Broadside {
             // Stable sort: ties keep the lowest cell first, like `best_det`.
             cands.sort_by(|&a, &b| scores[b].total_cmp(&scores[a]));
             cands.truncate(s.candidates.max(1));
-            if cands.len() == 1 {
-                return cands[0];
+            if cands.len() > 1 {
+                let mut own = Rng::new(rng.next_u64());
+                let worlds = search::sampled(k, &p, s.samples, prior, &mut own);
+                return Tree::new(&worlds, s).choose_sampled(k.hits.0, self.threads, &cands);
             }
-            // Its own random stream: how many samples it draws must not
-            // shift the tie-breaks of later moves.
-            return self.sampled_search(k, &p, &cands, &mut Rng::new(rng.next_u64()));
         }
         best_random(pool, &scores, rng)
     }
