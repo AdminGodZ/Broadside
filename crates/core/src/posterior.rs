@@ -154,54 +154,61 @@ impl Posterior {
         }
     }
 
-    /// Every joint placement of the afloat ships with its layout count, or
-    /// `None` if there are more than `limit` of them. Index by ship.
+    /// Every joint placement of the afloat ships with its layout count (how
+    /// many arrangements of the sunk ships go with it), ordered by slots.
+    /// `None` if there are more than `limit` of them, or if they stand for
+    /// more than `ENUM_WORK * limit` layouts. Index by ship.
     pub fn enumerate_afloat(
         k: &Knowledge,
         limit: usize,
     ) -> Option<Vec<([Option<u8>; SHIPS], u64)>> {
-        fn rec(
-            k: &Knowledge,
-            ships: &[usize],
-            fixed: &mut Vec<(usize, u8)>,
-            out: &mut Vec<([Option<u8>; SHIPS], u64)>,
-            limit: usize,
-        ) -> bool {
-            let p = Posterior::compute_fixed(k, fixed, 1);
-            let Some((&ship, rest)) = ships.split_first() else {
-                let mut t = [None; SHIPS];
-                for &(s, slot) in fixed.iter() {
-                    t[s] = Some(slot);
-                }
-                out.push((t, p.layouts));
-                return out.len() <= limit;
-            };
-            for slot in 0..SLOTS {
-                if p.ships[ship][slot] == 0 {
-                    continue;
-                }
-                fixed.push((ship, slot as u8));
-                let ok = if rest.is_empty() {
-                    // Last ship: its weights are the leaf counts already.
-                    let mut t = [None; SHIPS];
-                    for &(s, sl) in fixed.iter() {
-                        t[s] = Some(sl);
-                    }
-                    out.push((t, p.ships[ship][slot]));
-                    out.len() <= limit
-                } else {
-                    rec(k, rest, fixed, out, limit)
-                };
-                fixed.pop();
-                if !ok {
-                    return false;
-                }
-            }
-            true
+        let sunk: Vec<(usize, Vec<u8>)> = (0..SHIPS)
+            .filter_map(|ship| {
+                let sk = k.sunk[ship]?;
+                let len = LENGTHS[ship];
+                let t = THROUGH[len][sk.cell as usize];
+                let cands = t.slots[..t.n as usize]
+                    .iter()
+                    .copied()
+                    .filter(|&slot| SEGMENTS[len][slot as usize] & !sk.hits.0 == 0)
+                    .collect();
+                Some((ship, cands))
+            })
+            .collect();
+        // Each placement stands for at most one layout per arrangement of
+        // the sunk ships, so with few arrangements we can stop early.
+        let arrangements = sunk.iter().map(|(_, c)| c.len()).product::<usize>();
+        let mut e = Enumerator {
+            misses: k.misses.0,
+            hits: k.hits.0,
+            budget: limit.saturating_mul(arrangements.clamp(1, ENUM_WORK)),
+            keys: Vec::new(),
+        };
+        // One byte per ship, first ship most significant; 0xFF = sunk.
+        let none = sunk.iter().fold(0u64, |m, (s, _)| m | slot_key(*s, 0xFF));
+        if !e.sunk(&sunk, 0, k.afloat_mask(), none) {
+            return None;
         }
-        let ships: Vec<usize> = Bits(k.afloat_mask() as u128).collect();
-        let mut out = Vec::new();
-        rec(k, &ships, &mut Vec::new(), &mut out, limit).then_some(out)
+        e.keys.sort_unstable();
+        let mut out: Vec<([Option<u8>; SHIPS], u64)> = Vec::new();
+        let mut last = None;
+        for key in e.keys {
+            if last == Some(key) {
+                out.last_mut().unwrap().1 += 1;
+                continue;
+            }
+            if out.len() == limit {
+                return None;
+            }
+            last = Some(key);
+            let mut t = [None; SHIPS];
+            for (s, slot) in t.iter_mut().enumerate() {
+                let b = (key >> (8 * (SHIPS - 1 - s))) as u8;
+                *slot = (b != 0xFF).then_some(b);
+            }
+            out.push((t, 1));
+        }
+        Some(out)
     }
 
     /// Draws placements for every ship still afloat, exactly from the
@@ -283,8 +290,9 @@ impl Solver {
         if uncovered == 0 {
             return self.free(!(self.misses | placed) & crate::Bitboard::FULL.0, afloat);
         }
-        // Prune: the afloat ships must have room for every uncovered hit.
-        let room: usize = Bits(afloat as u128).map(|s| LENGTHS[s]).sum();
+        // Prune: the afloat ships must have room for every uncovered hit,
+        // and each keeps at least one cell unhit.
+        let room: usize = Bits(afloat as u128).map(|s| LENGTHS[s] - 1).sum();
         if room < uncovered.count_ones() as usize {
             return 0;
         }
@@ -412,6 +420,98 @@ impl Solver {
             }
         }
         z_total.unwrap_or(1)
+    }
+}
+
+/// Layouts `enumerate_afloat` may walk through per placement it may return.
+pub const ENUM_WORK: usize = 16;
+
+#[inline]
+fn slot_key(ship: usize, slot: usize) -> u64 {
+    (slot as u64) << (8 * (SHIPS - 1 - ship))
+}
+
+/// Walks every consistent layout like `Solver`, but lists the afloat ships'
+/// placements instead of counting them.
+struct Enumerator {
+    misses: u128,
+    hits: u128,
+    /// Layouts left to walk before giving up.
+    budget: usize,
+    keys: Vec<u64>,
+}
+
+impl Enumerator {
+    fn sunk(&mut self, list: &[(usize, Vec<u8>)], placed: u128, afloat: u8, key: u64) -> bool {
+        let Some(((ship, cands), rest)) = list.split_first() else {
+            return self.cover(placed, self.hits & !placed, afloat, key);
+        };
+        for &slot in cands {
+            let m = SEGMENTS[LENGTHS[*ship]][slot as usize];
+            if m & placed == 0 && !self.sunk(rest, placed | m, afloat, key) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn cover(&mut self, placed: u128, uncovered: u128, afloat: u8, key: u64) -> bool {
+        if uncovered == 0 {
+            return self.free(
+                !(self.misses | placed) & crate::Bitboard::FULL.0,
+                afloat,
+                key,
+            );
+        }
+        let room: usize = Bits(afloat as u128).map(|s| LENGTHS[s] - 1).sum();
+        if room < uncovered.count_ones() as usize {
+            return true;
+        }
+        let h = uncovered.trailing_zeros() as usize;
+        let blocked = self.misses | placed;
+        for ship in Bits(afloat as u128) {
+            let len = LENGTHS[ship];
+            let t = THROUGH[len][h];
+            for &slot in &t.slots[..t.n as usize] {
+                let m = SEGMENTS[len][slot as usize];
+                if m & blocked != 0 || m & !self.hits == 0 {
+                    continue;
+                }
+                let key = key | slot_key(ship, slot as usize);
+                if !self.cover(placed | m, uncovered & !m, afloat & !(1 << ship), key) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn free(&mut self, free: u128, afloat: u8, key: u64) -> bool {
+        if afloat == 0 {
+            if self.budget == 0 {
+                return false;
+            }
+            self.budget -= 1;
+            self.keys.push(key);
+            return true;
+        }
+        let ship = afloat.trailing_zeros() as usize;
+        let len = LENGTHS[ship];
+        let rest = afloat & !(1 << ship);
+        let (h, v) = starts(len, free);
+        for (starts, vertical) in [(h, 0), (v, 1)] {
+            for start in Bits(starts) {
+                let slot = 2 * start + vertical;
+                if !self.free(
+                    free & !SEGMENTS[len][slot],
+                    rest,
+                    key | slot_key(ship, slot),
+                ) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 }
 
@@ -799,6 +899,39 @@ mod tests {
                 assert_eq!(f.iter().map(|x| x.1).sum::<u64>(), p.layouts);
                 checked += 1;
             }
+        }
+    }
+
+    #[test]
+    fn enumerated_futures_match_pinned_counts() {
+        let mut rng = Rng::new(32);
+        let mut checked = 0;
+        while checked < 30 {
+            let shots = 45 + rng.below(35) as usize;
+            let k = random_state(&mut rng, shots);
+            let Some(f) = Posterior::enumerate_afloat(&k, 3000) else {
+                continue;
+            };
+            if k.won() {
+                continue;
+            }
+            // One below the support is refused.
+            assert!(Posterior::enumerate_afloat(&k, f.len() - 1).is_none());
+            let p = Posterior::compute(&k);
+            let mut ships = [[0u64; SLOTS]; SHIPS];
+            for (t, w) in &f {
+                let fixed: Vec<(usize, u8)> = (0..SHIPS)
+                    .filter_map(|s| t[s].map(|slot| (s, slot)))
+                    .collect();
+                assert_eq!(Posterior::compute_fixed(&k, &fixed, 1).layouts, *w);
+                for &(s, slot) in &fixed {
+                    ships[s][slot as usize] += w;
+                }
+            }
+            for s in (0..SHIPS).filter(|&s| k.sunk[s].is_none()) {
+                assert_eq!(ships[s], p.ships[s]);
+            }
+            checked += 1;
         }
     }
 

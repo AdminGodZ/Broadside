@@ -3,6 +3,7 @@
 pub mod baseline;
 pub mod engine;
 pub mod placement;
+pub mod search;
 mod tilts;
 
 use crate::game::{Knowledge, Layout};
@@ -21,7 +22,8 @@ pub trait Shooter: Send {
 pub trait Placer: Send {
     fn name(&self) -> String;
     fn place(&mut self, rng: &mut Rng) -> Layout;
-    /// After a game: our layout and every shot the opponent fired at it.
+    /// After a game: our layout and the shots the opponent fired at it, in
+    /// order (all of them only if the opponent sank us).
     fn learn(&mut self, _layout: &Layout, _opponent_shots: &[usize]) {}
 }
 
@@ -64,72 +66,78 @@ impl Placer for SpacedPlacer {
 
 pub const SHOOTERS: &[&str] = &[
     "broadside",
+    "broadside:KEY=N,... (exact, cands, solve, nodes, leaf, deep, afloat, samples)",
     "greedy",
     "density",
+    "NAME@tiltA (expects tiltA placement)",
     "parity",
     "hunt-target",
     "random",
 ];
 pub const PLACERS: &[&str] = &[
     "broadside",
+    "equilibrium",
     "uniform",
     "spaced",
     "tiltA (e.g. tilt1.5)",
     "mix:A=P,A=P,...",
 ];
 
+/// Tilts worth asking for: finite, and not so strong that fitting breaks down.
+fn alpha(s: &str) -> Option<f64> {
+    s.parse().ok().filter(|a| (-1.0..=4.0).contains(a))
+}
+
+/// The engine by name: `broadside`, `greedy`, or `broadside:KEY=N,...` with
+/// search settings for tuning experiments.
+fn engine(name: &str) -> Option<engine::Broadside> {
+    let mut e = match name {
+        "greedy" => return Some(engine::Broadside::greedy()),
+        "broadside" => return Some(engine::Broadside::new()),
+        _ => engine::Broadside::new(),
+    };
+    let s = &mut e.search;
+    for setting in name.strip_prefix("broadside:")?.split(',') {
+        let (key, v) = setting.split_once('=')?;
+        let v: usize = v.parse().ok()?;
+        match key {
+            "exact" => s.exact_limit = v,
+            "cands" => s.candidates = v,
+            "solve" => s.solve_worlds = v,
+            "nodes" => s.solve_nodes = v as u64,
+            "leaf" => s.leaf_worlds = v,
+            "deep" => s.deep_worlds = v,
+            "afloat" => s.max_afloat = v,
+            "samples" => s.samples = v,
+            _ => return None,
+        }
+    }
+    let valid = s.candidates >= 1
+        && s.solve_worlds.max(s.leaf_worlds) <= 64
+        && (s.max_afloat == 0 || s.samples >= 2);
+    valid.then_some(e)
+}
+
 pub fn shooter(name: &str) -> Option<Box<dyn Shooter>> {
-    // NAME@tiltA: the shooter expects its opponent to place like `tiltA`.
-    if let Some((base, alpha)) = name.split_once("@tilt") {
-        let prior = Some(placement::fitted(alpha.parse().ok()?));
+    // NAME@tiltA: the shooter expects its opponent to place like `tiltA`,
+    // and does not learn otherwise.
+    if let Some((base, a)) = name.split_once("@tilt") {
+        let prior = Some(placement::fitted(alpha(a)?));
         return Some(match base {
             "density" => Box::new(baseline::Density { prior }),
-            "greedy" => Box::new(engine::Broadside {
+            _ => Box::new(engine::Broadside {
                 prior,
                 learner: None,
-                ..engine::Broadside::greedy()
+                ..engine(base)?
             }),
-            "broadside" => Box::new(engine::Broadside {
-                prior,
-                learner: None,
-                ..engine::Broadside::new()
-            }),
-            _ => return None,
         });
     }
     Some(match name {
-        "broadside" => Box::new(engine::Broadside::new()),
-        "greedy" => Box::new(engine::Broadside::greedy()),
-        // broadside:AFLOAT:CANDIDATES:SAMPLES[:EXACT_LIMIT], for tuning experiments.
-        n if n.starts_with("broadside:") => {
-            let v: Vec<usize> = n
-                .split(':')
-                .skip(1)
-                .map(|x| x.parse().ok())
-                .collect::<Option<_>>()?;
-            let mut search = engine::Broadside::new().search;
-            match v[..] {
-                [a, c, s] => (search.max_afloat, search.candidates, search.samples) = (a, c, s),
-                [a, c, s, e] => {
-                    (
-                        search.max_afloat,
-                        search.candidates,
-                        search.samples,
-                        search.exact_limit,
-                    ) = (a, c, s, e)
-                }
-                _ => return None,
-            }
-            Box::new(engine::Broadside {
-                search,
-                ..engine::Broadside::new()
-            })
-        }
         "density" => Box::new(baseline::Density::default()),
         "parity" => Box::new(baseline::HuntTarget { parity: true }),
         "hunt-target" => Box::new(baseline::HuntTarget { parity: false }),
         "random" => Box::new(baseline::RandomShooter),
-        _ => return None,
+        _ => Box::new(engine(name)?),
     })
 }
 
@@ -144,12 +152,12 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
                 .split(',')
                 .map(|kv| {
                     let (a, p) = kv.split_once('=')?;
-                    Some((a.parse().ok()?, p.parse().ok()?))
+                    Some((alpha(a)?, p.parse().ok()?))
                 })
                 .collect::<Option<_>>()?;
-            Box::new(placement::MixedPlacer::new(&parts))
+            Box::new(placement::MixedPlacer::new(&parts)?)
         }
-        n if n.starts_with("tilt") => Box::new(placement::TiltedPlacer::new(n[4..].parse().ok()?)),
+        n if n.starts_with("tilt") => Box::new(placement::TiltedPlacer::new(alpha(&n[4..])?)),
         _ => return None,
     })
 }

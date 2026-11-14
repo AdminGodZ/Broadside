@@ -88,15 +88,17 @@ impl Stats {
 }
 
 /// Plays `shooter` against `layout` to the end; returns every shot in order.
+/// Panics if the shooter fires off the board or at a cell twice: a score
+/// from an illegal game would mean nothing.
 pub fn play_game(shooter: &mut dyn Shooter, layout: Layout, rng: &mut Rng) -> Vec<usize> {
     let mut board = Board::new(layout);
     let mut k = Knowledge::new();
     let mut shots = Vec::with_capacity(64);
     while !k.won() {
         let cell = shooter.choose(&k, rng);
-        debug_assert!(
-            k.unknown().has(cell),
-            "{} fired twice at {cell}",
+        assert!(
+            cell < CELLS && k.unknown().has(cell),
+            "{} fired at {cell}: off the board or already shot",
             shooter.name()
         );
         let outcome = board.fire(cell);
@@ -145,8 +147,45 @@ fn parallel<T: Send + Default>(
     })
 }
 
-/// Shots-to-win distribution of a shooter against a placer. Every game uses
-/// fresh players, so nothing is learned between games.
+/// One simulated game: the layout and the shots it took to sink.
+#[derive(Clone, Copy, Debug)]
+pub struct Game {
+    pub layout: Layout,
+    pub shots: u32,
+}
+
+/// Plays `games` games of a shooter against a placer and returns them in
+/// order. Every game uses fresh players, so nothing is learned between games,
+/// and game `i` sees the same layout whatever the shooter: results of two
+/// shooters pair up game by game.
+pub fn games(
+    shooter: ShooterFactory,
+    placer: PlacerFactory,
+    games: u64,
+    seed: u64,
+    threads: usize,
+    progress: &(dyn Fn(u64) + Sync),
+) -> Vec<Game> {
+    let per_thread = parallel(
+        games,
+        threads,
+        &|i, out: &mut Vec<(u64, Game)>| {
+            let layout = placer().place(&mut Rng::stream(seed, 2 * i));
+            let shots = play_out(
+                shooter().as_mut(),
+                layout,
+                &mut Rng::stream(seed, 2 * i + 1),
+            );
+            out.push((i, Game { layout, shots }));
+        },
+        progress,
+    );
+    let mut all: Vec<(u64, Game)> = per_thread.into_iter().flatten().collect();
+    all.sort_unstable_by_key(|g| g.0);
+    all.into_iter().map(|g| g.1).collect()
+}
+
+/// Shots-to-win distribution of a shooter against a placer (see `games`).
 pub fn benchmark(
     shooter: ShooterFactory,
     placer: PlacerFactory,
@@ -155,24 +194,11 @@ pub fn benchmark(
     threads: usize,
     progress: &(dyn Fn(u64) + Sync),
 ) -> Stats {
-    let per_thread = parallel(
-        games,
-        threads,
-        &|i, stats: &mut Stats| {
-            let layout = placer().place(&mut Rng::stream(seed, 2 * i));
-            stats.add(play_out(
-                shooter().as_mut(),
-                layout,
-                &mut Rng::stream(seed, 2 * i + 1),
-            ));
-        },
-        progress,
-    );
-    let mut total = Stats::default();
-    for s in &per_thread {
-        total.merge(s);
+    let mut stats = Stats::default();
+    for g in self::games(shooter, placer, games, seed, threads, progress) {
+        stats.add(g.shots);
     }
-    total
+    stats
 }
 
 /// One side of a duel.
@@ -188,6 +214,11 @@ pub struct DuelResult {
     /// Wins over the second half of each match, after players had time to learn.
     pub a_wins_late: u64,
     pub b_wins_late: u64,
+    /// (A's wins, games) of every match. Games within a match depend on each
+    /// other once players learn, so matches are the unit for error bars.
+    pub matches: Vec<(u32, u32)>,
+    /// Shots each side needed to sink the other's fleet, played out to the
+    /// end even where the real game was already decided.
     pub a_stats: Stats,
     pub b_stats: Stats,
 }
@@ -197,17 +228,36 @@ impl DuelResult {
         self.a_wins as f64 / (self.a_wins + self.b_wins) as f64
     }
 
-    pub fn a_rate_late(&self) -> f64 {
-        self.a_wins_late as f64 / (self.a_wins_late + self.b_wins_late) as f64
+    /// `None` if no game fell into the second half of its match.
+    pub fn a_rate_late(&self) -> Option<f64> {
+        let n = self.a_wins_late + self.b_wins_late;
+        (n > 0).then(|| self.a_wins_late as f64 / n as f64)
+    }
+
+    /// Standard error of `a_rate`, from the spread between matches.
+    pub fn a_rate_se(&self) -> f64 {
+        let n = self.matches.len() as f64;
+        let rate = self.a_rate();
+        let games = (self.a_wins + self.b_wins) as f64;
+        // Ratio estimator over matches (they may differ in length).
+        let ss: f64 = self
+            .matches
+            .iter()
+            .map(|&(w, g)| (w as f64 - rate * g as f64).powi(2))
+            .sum();
+        (n / (n - 1.0).max(1.0) * ss).sqrt() / games
     }
 }
 
 /// Head-to-head games in matches of `match_len` games. Players persist (and
-/// learn) through a match: shooters see each opponent layout afterwards,
-/// placers see the shots fired at them. `match_len = 1` means fresh players
-/// every game. Shooters alternate shots and never see the other side, so a
-/// game is decided by comparing shots-to-win; the first mover (A on even
-/// games, B on odd) wins ties.
+/// learn) through a match: after each game shooters see the opponent's
+/// layout, and placers see the shots fired at their own fleet before the game
+/// ended. `match_len = 1` means fresh players every game.
+///
+/// Shooters alternate shots and never see the other side, so a game is
+/// decided by comparing shots-to-win, the first mover winning ties. The first
+/// move alternates within a match and between matches, so neither half of a
+/// match favours a side.
 pub fn duel(
     a: &Player,
     b: &Player,
@@ -225,6 +275,7 @@ pub fn duel(
         &|m, r: &mut DuelResult| {
             let (mut sa, mut pa, mut sb, mut pb) =
                 ((a.shooter)(), (a.placer)(), (b.shooter)(), (b.placer)());
+            let mut tally = (0u32, 0u32);
             for g in 0..match_len {
                 let i = m * match_len + g;
                 if i >= games {
@@ -234,14 +285,22 @@ pub fn duel(
                 let lb = pb.place(&mut Rng::stream(seed, 4 * i + 1));
                 let shots_a = play_game(sa.as_mut(), lb, &mut Rng::stream(seed, 4 * i + 2));
                 let shots_b = play_game(sb.as_mut(), la, &mut Rng::stream(seed, 4 * i + 3));
+                let (na, nb) = (shots_a.len(), shots_b.len());
+                let a_first = (m + g).is_multiple_of(2);
+                let a_won = na < nb || (na == nb && a_first);
+                // The game stops at the winner's last shot: the loser has
+                // fired as many shots, or one fewer if the winner moved first.
+                let (fired_a, fired_b) = if a_won {
+                    (na, na - a_first as usize)
+                } else {
+                    (nb - !a_first as usize, nb)
+                };
                 sa.learn(&lb);
                 sb.learn(&la);
-                pa.learn(&la, &shots_b);
-                pb.learn(&lb, &shots_a);
-                let (na, nb) = (shots_a.len() as u32, shots_b.len() as u32);
-                r.a_stats.add(na);
-                r.b_stats.add(nb);
-                let a_won = na < nb || (na == nb && i.is_multiple_of(2));
+                pa.learn(&la, &shots_b[..fired_b]);
+                pb.learn(&lb, &shots_a[..fired_a]);
+                r.a_stats.add(na as u32);
+                r.b_stats.add(nb as u32);
                 let late = 2 * g >= match_len;
                 if a_won {
                     r.a_wins += 1;
@@ -250,7 +309,9 @@ pub fn duel(
                     r.b_wins += 1;
                     r.b_wins_late += late as u64;
                 }
+                tally = (tally.0 + a_won as u32, tally.1 + 1);
             }
+            r.matches.push(tally);
         },
         progress,
     );
@@ -260,8 +321,80 @@ pub fn duel(
         total.b_wins += r.b_wins;
         total.a_wins_late += r.a_wins_late;
         total.b_wins_late += r.b_wins_late;
+        total.matches.extend(&r.matches);
         total.a_stats.merge(&r.a_stats);
         total.b_stats.merge(&r.b_stats);
     }
     total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::{self, UniformPlacer};
+
+    /// Shoots the board in reading order: every game takes the same shots.
+    struct Sweep;
+
+    impl Shooter for Sweep {
+        fn name(&self) -> String {
+            "sweep".into()
+        }
+        fn choose(&mut self, k: &Knowledge, _: &mut Rng) -> usize {
+            k.unknown().0.trailing_zeros() as usize
+        }
+    }
+
+    /// Records how many shots it was shown after each game.
+    struct Watcher(std::sync::Arc<std::sync::Mutex<Vec<usize>>>);
+
+    impl Placer for Watcher {
+        fn name(&self) -> String {
+            "watcher".into()
+        }
+        fn place(&mut self, _: &mut Rng) -> Layout {
+            // Destroyer in the last two cells: a sweep needs all 100 shots.
+            Layout::new([0, 20, 40, 60, 196]).unwrap()
+        }
+        fn learn(&mut self, _: &Layout, shots: &[usize]) {
+            self.0.lock().unwrap().push(shots.len());
+        }
+    }
+
+    #[test]
+    fn duels_are_fair_to_identical_players() {
+        // Identical deterministic players tie every game, so the first
+        // mover wins it. Neither side may come out ahead, early or late.
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let player = Player {
+            shooter: &|| Box::new(Sweep),
+            placer: &|| Box::new(Watcher(seen.clone())),
+        };
+        let r = duel(&player, &player, 100, 2, 1, 2, &|_| {});
+        assert_eq!((r.a_wins, r.b_wins), (50, 50));
+        assert_eq!((r.a_wins_late, r.b_wins_late), (25, 25));
+        // The loser never got to fire its hundredth shot.
+        let count = |shots| seen.lock().unwrap().iter().filter(|&&n| n == shots).count();
+        assert_eq!((count(100), count(99)), (100, 100));
+
+        let half = duel(&player, &player, 1, 2, 1, 1, &|_| {});
+        assert_eq!(half.a_rate_late(), None);
+    }
+
+    #[test]
+    fn games_pair_up_across_shooters() {
+        let run = |name: &'static str| {
+            games(
+                &|| ai::shooter(name).unwrap(),
+                &|| Box::new(UniformPlacer),
+                6,
+                5,
+                3,
+                &|_| {},
+            )
+        };
+        let (a, b) = (run("random"), run("parity"));
+        assert!(a.iter().zip(&b).all(|(x, y)| x.layout == y.layout));
+        assert!(a.iter().all(|g| (17..=100).contains(&g.shots)));
+    }
 }

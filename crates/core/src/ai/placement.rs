@@ -17,25 +17,39 @@ use crate::symmetry::CELL_MAP;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// Per-ship cumulative placement weights for fast sampling.
+/// A placement distribution: P(layout) ∝ Π e^θ[cell] over its ship cells.
 #[derive(Clone)]
 pub struct Tilt {
     pub theta: [f64; CELLS],
-    /// Relative weight of each placement, by ship and slot (0 off the board).
+    /// Relative weight of each placement, by ship and slot (0 off the board),
+    /// scaled so each ship's legal slots average 1. Adding a constant to
+    /// every θ leaves the distribution unchanged, and these weights too.
     pub weight: [[f64; SLOTS]; SHIPS],
     cdf: [[f64; SLOTS]; SHIPS],
 }
 
+/// Whole-fleet draws rejected for overlap before `Tilt::sample` switches to
+/// placing ship by ship (only extreme tilts get there).
+const MAX_REJECTS: usize = 10_000;
+
 impl Tilt {
+    /// Panics on a θ that is not finite.
     pub fn from_theta(theta: [f64; CELLS]) -> Self {
+        assert!(theta.iter().all(|t| t.is_finite()), "tilt must be finite");
         let mut weight = [[0.0; SLOTS]; SHIPS];
         let mut cdf = [[0.0; SLOTS]; SHIPS];
         for s in 0..SHIPS {
+            let seg = &SEGMENTS[LENGTHS[s]];
+            let log = |slot: usize| Bits(seg[slot]).map(|x| theta[x]).sum::<f64>();
+            let legal = || (0..SLOTS).filter(|&slot| seg[slot] != 0);
+            // Relative to the heaviest slot, so nothing overflows.
+            let top = legal().map(log).fold(f64::NEG_INFINITY, f64::max);
+            let mean =
+                legal().map(|slot| (log(slot) - top).exp()).sum::<f64>() / legal().count() as f64;
             let mut acc = 0.0;
             for slot in 0..SLOTS {
-                let m = SEGMENTS[LENGTHS[s]][slot];
-                if m != 0 {
-                    weight[s][slot] = Bits(m).map(|x| theta[x]).sum::<f64>().exp();
+                if seg[slot] != 0 {
+                    weight[s][slot] = (log(slot) - top).exp() / mean;
                 }
                 acc += weight[s][slot];
                 cdf[s][slot] = acc;
@@ -45,20 +59,50 @@ impl Tilt {
     }
 
     pub fn sample(&self, rng: &mut Rng) -> Layout {
-        loop {
+        for _ in 0..MAX_REJECTS {
             let mut slots = [0u8; SHIPS];
             let mut used = 0u128;
             let mut ok = true;
             for (s, slot) in slots.iter_mut().enumerate() {
                 let cdf = &self.cdf[s];
                 let r = rng.f64() * cdf[SLOTS - 1];
+                // The first slot whose cumulative weight passes r: never an
+                // off-board slot, those add no weight.
                 let k = cdf.partition_point(|&c| c <= r).min(SLOTS - 1);
                 *slot = k as u8;
                 let m = SEGMENTS[LENGTHS[s]][k];
-                ok &= m & used == 0;
+                ok &= m != 0 && m & used == 0;
                 used |= m;
             }
             if ok {
+                return Layout { slots };
+            }
+        }
+        // Nearly every draw overlaps (the tilt piles all ships onto the same
+        // cells): place ship by ship among the slots still free instead.
+        loop {
+            let mut slots = [0u8; SHIPS];
+            let mut used = 0u128;
+            let placed = slots.iter_mut().enumerate().all(|(s, slot)| {
+                let seg = &SEGMENTS[LENGTHS[s]];
+                let free = |k: usize| seg[k] != 0 && seg[k] & used == 0;
+                let total: f64 = (0..SLOTS)
+                    .filter(|&k| free(k))
+                    .map(|k| self.weight[s][k])
+                    .sum();
+                let mut r = rng.f64() * total;
+                let pick = (0..SLOTS).filter(|&k| free(k)).find(|&k| {
+                    r -= self.weight[s][k];
+                    r < 0.0
+                });
+                let Some(k) = pick.or_else(|| (0..SLOTS).find(|&k| free(k))) else {
+                    return false;
+                };
+                *slot = k as u8;
+                used |= seg[k];
+                true
+            });
+            if placed {
                 return Layout { slots };
             }
         }
@@ -66,6 +110,7 @@ impl Tilt {
 
     /// Target occupancy of tilt `alpha`: `u^(1-alpha)`, scaled to 17 ship cells.
     pub fn target_occupancy(alpha: f64) -> [f64; CELLS] {
+        assert!(alpha.is_finite(), "tilt alpha must be finite");
         let p = Posterior::cached(&Knowledge::new(), 1);
         let raw: Vec<f64> = (0..CELLS).map(|c| p.prob(c).powf(1.0 - alpha)).collect();
         let scale = FLEET_CELLS as f64 / raw.iter().sum::<f64>();
@@ -155,22 +200,23 @@ impl Placer for TiltedPlacer {
 
 /// Picks a tilt at random each game: a mixed strategy in the placement game.
 pub struct MixedPlacer {
-    parts: Vec<(f64, f64, Arc<Tilt>)>, // (alpha, cumulative probability, tilt)
+    parts: Vec<(f64, f64, Arc<Tilt>)>, // (alpha, probability, tilt)
 }
 
 impl MixedPlacer {
     /// `parts`: (alpha, probability) pairs; probabilities are normalized.
-    pub fn new(parts: &[(f64, f64)]) -> Self {
+    /// `None` unless they are finite, non-negative and sum to more than zero.
+    pub fn new(parts: &[(f64, f64)]) -> Option<Self> {
         let total: f64 = parts.iter().map(|p| p.1).sum();
-        let mut acc = 0.0;
+        let valid = parts.iter().all(|p| p.0.is_finite() && p.1 >= 0.0);
+        if !valid || !total.is_finite() || total <= 0.0 {
+            return None;
+        }
         let parts = parts
             .iter()
-            .map(|&(a, p)| {
-                acc += p / total;
-                (a, acc, fitted(a))
-            })
+            .map(|&(a, p)| (a, p / total, fitted(a)))
             .collect();
-        Self { parts }
+        Some(Self { parts })
     }
 
     /// Robust mix from the measured placement game (`broadside matrix`, 11
@@ -179,21 +225,28 @@ impl MixedPlacer {
     /// ~44.9 shots, versus 44.6 for uniform placement; shooters that assume
     /// uniform placement need ~45.4-45.7.
     pub fn equilibrium() -> Self {
-        Self::new(&[(0.25, 0.45), (0.75, 0.30), (1.0, 0.25)])
+        Self::new(&[(0.25, 0.45), (0.75, 0.30), (1.0, 0.25)]).expect("a valid mix")
     }
 }
 
 impl Placer for MixedPlacer {
     fn name(&self) -> String {
-        let parts: Vec<String> = self.parts.iter().map(|p| p.0.to_string()).collect();
-        format!("mix({})", parts.join(","))
+        let parts: Vec<String> = self
+            .parts
+            .iter()
+            .map(|p| format!("{}={:.4}", p.0, p.1))
+            .collect();
+        format!("mix:{}", parts.join(","))
     }
     fn place(&mut self, rng: &mut Rng) -> Layout {
-        let r = rng.f64();
+        let mut r = rng.f64();
         let i = self
             .parts
             .iter()
-            .position(|p| r < p.1)
+            .position(|p| {
+                r -= p.1;
+                r < 0.0
+            })
             .unwrap_or(self.parts.len() - 1);
         self.parts[i].2.sample(rng)
     }
@@ -204,9 +257,12 @@ impl Placer for MixedPlacer {
 ///
 /// It records how late the opponent shoots each cell (never shooting a cell
 /// counts as latest). The options are the equilibrium mix and two tilts toward
-/// the cells the opponent reaches last; a UCB bandit picks among them by the
-/// shots the opponent needed. Against an opponent that adapts, exploitation
-/// stops paying and the bandit drifts back to the equilibrium.
+/// the cells the opponent reaches last; a UCB bandit picks among them by how
+/// many shots the opponent spent per hit. Against an opponent that adapts,
+/// exploitation stops paying and the bandit drifts back to the equilibrium.
+///
+/// It learns only from shots actually fired: a game ends when either fleet
+/// is sunk, so the opponent's trace usually stops short of sinking ours.
 pub struct AdaptivePlacer {
     equilibrium: MixedPlacer,
     lateness: [f64; CELLS],
@@ -245,7 +301,7 @@ impl AdaptivePlacer {
         if self.games < WARMUP_GAMES {
             return 0;
         }
-        // UCB1 on shots the opponent needed (scaled to roughly [0, 1]).
+        // UCB1 on the shots the opponent needs (as a fraction of the board).
         if let Some(a) = (0..3).find(|&a| self.arm_plays[a] == 0) {
             return a;
         }
@@ -254,7 +310,7 @@ impl AdaptivePlacer {
             .max_by(|&a, &b| {
                 let ucb = |i: usize| {
                     let n = self.arm_plays[i] as f64;
-                    self.arm_shots[i] / n / 100.0 + 0.15 * (2.0 * total.ln() / n).sqrt()
+                    self.arm_shots[i] / n + 0.15 * (2.0 * total.ln() / n).sqrt()
                 };
                 ucb(a).total_cmp(&ucb(b))
             })
@@ -278,7 +334,7 @@ impl Placer for AdaptivePlacer {
         }
     }
 
-    fn learn(&mut self, _layout: &Layout, opponent_shots: &[usize]) {
+    fn learn(&mut self, layout: &Layout, opponent_shots: &[usize]) {
         let n = opponent_shots.len().max(1) as f64;
         let mut late = [1.0; CELLS];
         for (i, &c) in opponent_shots.iter().enumerate() {
@@ -288,8 +344,13 @@ impl Placer for AdaptivePlacer {
             *l += x;
         }
         self.games += 1;
+        // Shots per hit, scaled to the whole fleet: the shots the opponent
+        // needed if it sank us, an estimate of them if the game ended first.
+        let fleet = layout.occupied();
+        let hits = opponent_shots.iter().filter(|&&c| fleet.has(c)).count();
+        let needed = n * FLEET_CELLS as f64 / hits.max(1) as f64;
         self.arm_plays[self.last_arm] += 1;
-        self.arm_shots[self.last_arm] += opponent_shots.len() as f64;
+        self.arm_shots[self.last_arm] += (needed / CELLS as f64).min(1.0);
 
         let mean_l: Vec<f64> = self
             .lateness
@@ -332,6 +393,41 @@ mod tests {
         for _ in 0..200 {
             assert!(Layout::new(t.sample(&mut rng).slots).is_some());
         }
+    }
+
+    #[test]
+    fn extreme_tilts_still_sample_legal_layouts() {
+        let mut rng = Rng::new(2);
+        // A constant shift is no tilt at all, however large.
+        let mut one_cell = [0.0; CELLS];
+        one_cell[44] = 60.0;
+        for theta in [[-1000.0; CELLS], [1000.0; CELLS], one_cell] {
+            let t = Tilt::from_theta(theta);
+            for _ in 0..20 {
+                assert!(Layout::new(t.sample(&mut rng).slots).is_some());
+            }
+        }
+        let (flat, shifted) = (
+            Tilt::from_theta([0.0; CELLS]),
+            Tilt::from_theta([1.0; CELLS]),
+        );
+        for (a, b) in flat
+            .weight
+            .iter()
+            .flatten()
+            .zip(shifted.weight.iter().flatten())
+        {
+            assert!((a - b).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn mixes_must_be_valid() {
+        assert!(MixedPlacer::new(&[]).is_none());
+        assert!(MixedPlacer::new(&[(1.0, 0.0)]).is_none());
+        assert!(MixedPlacer::new(&[(1.0, -1.0), (0.0, 2.0)]).is_none());
+        assert!(MixedPlacer::new(&[(1.0, f64::NAN)]).is_none());
+        assert!(MixedPlacer::new(&[(0.0, 3.0), (1.0, 1.0)]).is_some());
     }
 
     #[test]

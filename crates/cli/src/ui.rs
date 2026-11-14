@@ -247,7 +247,8 @@ pub fn assist(seed: u64, shooter_name: &str) -> Result<(), String> {
     let mut engine = ai::shooter(shooter_name).ok_or("unknown shooter")?;
     let mut history: History = Vec::new();
     // Suggestion for the current history, so a typo doesn't re-roll ties.
-    let mut last: Option<(History, Option<usize>)> = None;
+    let mut last: Option<(History, usize)> = None;
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     println!("Report each shot's result: m (miss), h (hit), or the sunk ship: c b r s d");
     println!(
         "(carrier, battleship, cruiser, submarine, destroyer). Fire elsewhere with `E5 m`; `u` undoes; `q` quits."
@@ -261,27 +262,20 @@ pub fn assist(seed: u64, shooter_name: &str) -> Result<(), String> {
             println!("All ships sunk in {} shots.", k.shots_fired());
             return Ok(());
         }
-        let p = Posterior::compute_with(
-            &k,
-            std::thread::available_parallelism().map_or(1, |n| n.get()),
-        );
-        if p.layouts == 0 {
-            println!(
-                "Those reports are inconsistent: no fleet layout fits them. Undo (`u`) the wrong one."
-            );
-        }
+        // Reports are checked as they come in, so some layout always fits.
+        let p = Posterior::compute_with(&k, threads);
         let suggestion = match &last {
             Some((h, s)) if *h == history => *s,
             _ => {
-                let s = (p.layouts > 0).then(|| engine.choose(&k, &mut rng));
+                let s = engine.choose(&k, &mut rng);
                 last = Some((history.clone(), s));
                 s
             }
         };
-        let sc = if p.layouts > 0 { sunk_cells(&k) } else { 0 };
+        let sc = sunk_cells(&k);
         let view = |c: usize| view_cell(&k, sc, c).to_string();
         let hm = |c: usize| {
-            if Some(c) == suggestion {
+            if c == suggestion {
                 "<>".into()
             } else if k.shots().has(c) {
                 view_cell(&k, sc, c).to_string()
@@ -294,7 +288,7 @@ pub fn assist(seed: u64, shooter_name: &str) -> Result<(), String> {
             [&view, &hm],
         );
         println!("{} consistent layouts.", p.layouts);
-        let label = suggestion.map_or("-".into(), cell_name);
+        let label = cell_name(suggestion);
         let Some(a) = prompt(&format!("Fire at {label}. Result: ")) else {
             return Ok(());
         };
@@ -308,7 +302,7 @@ pub fn assist(seed: u64, shooter_name: &str) -> Result<(), String> {
         }
         let cell = match parts.len() {
             2 => parse_cell(parts.remove(0)),
-            _ => suggestion,
+            _ => Some(suggestion),
         };
         let Some(cell) = cell.filter(|&c| !k.shots().has(c)) else {
             println!("  need an unshot cell");
@@ -331,6 +325,16 @@ pub fn assist(seed: u64, shooter_name: &str) -> Result<(), String> {
             && k.is_sunk(s)
         {
             println!("  the {} is already sunk", s.name());
+            continue;
+        }
+        // A report no fleet layout fits is a typo: refuse it rather than
+        // advise (or declare victory) on an impossible board.
+        let mut after = k;
+        after.record(cell, o);
+        if Posterior::compute_with(&after, threads).layouts == 0 {
+            println!(
+                "  that cannot be: no fleet layout fits it with the earlier reports. Re-enter it, or undo (`u`) an earlier one."
+            );
             continue;
         }
         history.push((cell, o));

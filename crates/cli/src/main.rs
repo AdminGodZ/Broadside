@@ -14,17 +14,20 @@ Broadside - a Battleship engine
 Usage: broadside <command> [options]
 
 Commands:
-  play    Play against the engine in the terminal
-            --heat  also show where the engine thinks your ships are
-  assist  The engine advises your shots against any opponent; you report results
-  sim     Shots-to-win statistics of a shooter vs a placer
-            --shooter NAME (broadside)  --placer NAME (uniform)
-  duel    Head-to-head win rate: duel A B [--placer-a P] [--placer-b P]
-            --match N  play matches of N games in which both sides may learn
-  matrix  Placement game: placer tilt vs shooter's assumed tilt
-            --alphas 0,1,2  --base density|greedy|broadside
-  bench   Time the exact posterior on the empty board
-  count   Count every legal fleet layout (multithreaded brute force)
+  play     Play against the engine in the terminal
+             --heat  also show where the engine thinks your ships are
+  assist   The engine advises your shots against any opponent; you report results
+  sim      Shots-to-win statistics of a shooter vs a placer
+             --shooter NAME (broadside)  --placer NAME (uniform)
+             --dump FILE  also write every game (layout, shots) as CSV
+  compare  Two shooters on the same layouts: compare A B [--placer P]
+  duel     Head-to-head win rate: duel A B [--placer-a P] [--placer-b P]
+             --match N  play matches of N games in which both sides may learn
+  analyze  Where a shooter's misses happen
+  matrix   Placement game: placer tilt vs shooter's assumed tilt
+             --alphas 0,1,2  --base density|greedy|broadside
+  bench    Time the exact posterior and the engine's moves
+  count    Count every legal fleet layout (multithreaded brute force)
 
 Common options: --games N (1000)  --seed S (random)  --threads T (all cores)
 ";
@@ -76,6 +79,15 @@ impl Opts {
 
 fn threads() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+impl Opts {
+    fn threads(&self) -> Result<usize, String> {
+        match self.get("threads", threads())? {
+            0 => Err("--threads must be at least 1".into()),
+            t => Ok(t),
+        }
+    }
 }
 
 fn random_seed() -> u64 {
@@ -133,19 +145,88 @@ fn cmd_sim(o: &Opts) -> Result<(), String> {
     let games = o.get("games", 1000u64)?;
     let seed = o.get("seed", random_seed())?;
     let start = Instant::now();
-    let stats = sim::benchmark(
+    let played = sim::games(
         &|| ai::shooter(&sh).unwrap(),
         &|| ai::placer(&pl).unwrap(),
         games,
         seed,
-        o.get("threads", threads())?,
+        o.threads()?,
         &progress(games),
     );
+    let mut stats = Stats::default();
+    for g in &played {
+        stats.add(g.shots);
+    }
     print_stats(&format!("{sh} vs {pl}"), &stats);
     println!(
         "seed {seed}, {:.2?} ({:.2?}/game)",
         start.elapsed(),
         start.elapsed() / games.max(1) as u32
+    );
+    if let Some(path) = o.flags.get("dump") {
+        let mut csv = String::from("game,shots,carrier,battleship,cruiser,submarine,destroyer\n");
+        for (i, g) in played.iter().enumerate() {
+            let slots = g.layout.slots.map(|s| s.to_string()).join(",");
+            csv += &format!("{i},{},{slots}\n", g.shots);
+        }
+        std::fs::write(path, csv).map_err(|e| format!("{path}: {e}"))?;
+        println!("wrote {path} (ship columns are placement slots: 2 * top-left cell + vertical)");
+    }
+    Ok(())
+}
+
+/// Two shooters against the same layouts, game by game. The difference per
+/// game varies far less than either shooter's score, so small gains show up
+/// in a fraction of the games an unpaired comparison needs.
+fn cmd_compare(o: &Opts) -> Result<(), String> {
+    let [a, b] = [1, 2].map(|i| o.pos.get(i).cloned().unwrap_or_default());
+    check_shooter(&a)?;
+    check_shooter(&b)?;
+    let pl = o.str("placer", "uniform");
+    check_placer(&pl)?;
+    let games = o.get("games", 1000u64)?;
+    let seed = o.get("seed", random_seed())?;
+    let threads = o.threads()?;
+    let run = |name: &str| {
+        let start = Instant::now();
+        let played = sim::games(
+            &|| ai::shooter(name).unwrap(),
+            &|| ai::placer(&pl).unwrap(),
+            games,
+            seed,
+            threads,
+            &progress(games),
+        );
+        let mut stats = Stats::default();
+        for g in &played {
+            stats.add(g.shots);
+        }
+        print_stats(&format!("{name} vs {pl}"), &stats);
+        println!("  {:.2?}/game", start.elapsed() / games.max(1) as u32);
+        played
+    };
+    let (ga, gb) = (run(&a), run(&b));
+    let d: Vec<f64> = ga
+        .iter()
+        .zip(&gb)
+        .map(|(x, y)| y.shots as f64 - x.shots as f64)
+        .collect();
+    let n = d.len() as f64;
+    let mean = d.iter().sum::<f64>() / n;
+    let sd = (d.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
+    let (se, wins) = (sd / n.sqrt(), |f: fn(f64) -> bool| {
+        d.iter().filter(|&&x| f(x)).count()
+    });
+    println!(
+        "{a} saves {mean:+.4} ± {se:.4} shots per game over {b} (95% interval {:+.4} to {:+.4})",
+        mean - 1.96 * se,
+        mean + 1.96 * se
+    );
+    println!(
+        "  better in {} games, worse in {}, equal in {}; seed {seed}",
+        wins(|x| x > 0.0),
+        wins(|x| x < 0.0),
+        wins(|x| x == 0.0)
     );
     Ok(())
 }
@@ -172,25 +253,24 @@ fn cmd_duel(o: &Opts) -> Result<(), String> {
         games,
         match_len,
         seed,
-        o.get("threads", threads())?,
+        o.threads()?,
         &progress(games.div_ceil(match_len.max(1))),
     );
-    let p = r.a_rate();
-    let se = (p * (1.0 - p) / games as f64).sqrt();
     println!(
         "{a} ({pa}) vs {b} ({pb}): {} - {}   A wins {:.2}% ± {:.2}",
         r.a_wins,
         r.b_wins,
-        100.0 * p,
-        100.0 * se
+        100.0 * r.a_rate(),
+        100.0 * r.a_rate_se()
     );
     if match_len > 1 {
-        let pl = r.a_rate_late();
-        let n = (r.a_wins_late + r.b_wins_late) as f64;
+        let late = r
+            .a_rate_late()
+            .map_or("n/a".into(), |p| format!("{:.2}%", 100.0 * p));
         println!(
-            "  matches of {match_len}: A wins {:.2}% ± {:.2} over the second half of each match",
-            100.0 * pl,
-            100.0 * (pl * (1.0 - pl) / n).sqrt()
+            "  {} matches of {match_len} (the error bar is between matches): A wins {late} of the {} games in second halves",
+            r.matches.len(),
+            r.a_wins_late + r.b_wins_late
         );
     }
     print_stats(&format!("  {a} shots"), &r.a_stats);
@@ -207,11 +287,12 @@ fn cmd_analyze(o: &Opts) -> Result<(), String> {
     check_placer(&pl)?;
     let games = o.get("games", 1000u64)?;
     let seed = o.get("seed", random_seed())?;
+    let threads = o.threads()?;
     let next = std::sync::atomic::AtomicU64::new(0);
     // hunt shots, hunt misses, target shots, target misses, then hunt misses by ships afloat (1..=5)
     let totals = std::sync::Mutex::new([0u64; 10]);
     std::thread::scope(|s| {
-        for _ in 0..o.get("threads", threads()).unwrap_or(1) {
+        for _ in 0..threads {
             s.spawn(|| {
                 let (mut shooter, mut placer) =
                     (ai::shooter(&sh).unwrap(), ai::placer(&pl).unwrap());
@@ -280,7 +361,7 @@ fn cmd_matrix(o: &Opts) -> Result<(), String> {
         .collect::<Result<_, _>>()?;
     let games = o.get("games", 20000u64)?;
     let seed = o.get("seed", random_seed())?;
-    let threads = o.get("threads", threads())?;
+    let threads = o.threads()?;
     let base = o.str("base", "density");
     check_shooter(&format!("{base}@tilt1"))?;
     print!("placer \\ shooter");
@@ -312,25 +393,40 @@ fn cmd_matrix(o: &Opts) -> Result<(), String> {
         );
     }
     println!("{base} shooter, {games} games per cell, seed {seed}");
-    let (placer_mix, shooter_mix, value) = solve_game(&m, 200_000);
+    let (placer_mix, shooter_mix) = solve_game(&m, 200_000);
     let fmt = |mix: &[f64]| {
         alphas
             .iter()
             .zip(mix)
-            .filter(|(_, p)| **p > 0.005)
-            .map(|(a, p)| format!("{a}: {:.0}%", 100.0 * p))
+            .filter(|(_, p)| **p > 0.0005)
+            .map(|(a, p)| format!("{a}={p:.4}"))
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(",")
     };
-    println!("equilibrium value {value:.3} shots");
-    println!("  placer mix  (tilt α): {}", fmt(&placer_mix));
+    // What each mix guarantees in this matrix, whatever the other side does.
+    // The matrix's true value lies between the two.
+    let (n, dot) = (alphas.len(), |x: &[f64], y: &[f64]| -> f64 {
+        x.iter().zip(y).map(|(a, b)| a * b).sum()
+    });
+    let lower = (0..n)
+        .map(|j| (0..n).map(|i| placer_mix[i] * m[i][j]).sum())
+        .fold(f64::INFINITY, f64::min);
+    let upper = (0..n)
+        .map(|i| dot(&m[i], &shooter_mix))
+        .fold(f64::NEG_INFINITY, f64::max);
+    println!(
+        "equilibrium of this measured matrix: {lower:.3} to {upper:.3} shots (gap {:.4})",
+        upper - lower
+    );
+    println!("  placer mix  (tilt α): mix:{}", fmt(&placer_mix));
     println!("  shooter mix (expects α): {}", fmt(&shooter_mix));
     Ok(())
 }
 
 /// Mixed equilibrium of a zero-sum matrix game by fictitious play. The row
-/// player maximizes `m[i][j]`. Returns (row mix, column mix, value).
-fn solve_game(m: &[Vec<f64>], rounds: usize) -> (Vec<f64>, Vec<f64>, f64) {
+/// player maximizes `m[i][j]`. Returns (row mix, column mix); the caller
+/// checks how close they are to equilibrium.
+fn solve_game(m: &[Vec<f64>], rounds: usize) -> (Vec<f64>, Vec<f64>) {
     let (r, c) = (m.len(), m[0].len());
     let (mut row_counts, mut col_counts) = (vec![0u64; r], vec![0u64; c]);
     let (mut row_payoff, mut col_payoff) = (vec![0.0f64; r], vec![0.0f64; c]);
@@ -353,10 +449,7 @@ fn solve_game(m: &[Vec<f64>], rounds: usize) -> (Vec<f64>, Vec<f64>, f64) {
     let n = rounds as f64;
     let rows: Vec<f64> = row_counts.iter().map(|&x| x as f64 / n).collect();
     let cols: Vec<f64> = col_counts.iter().map(|&x| x as f64 / n).collect();
-    let value = (0..r)
-        .map(|i| (0..c).map(|j| rows[i] * cols[j] * m[i][j]).sum::<f64>())
-        .sum();
-    (rows, cols, value)
+    (rows, cols)
 }
 
 /// Fits placement tilts precisely and prints them as Rust source for
@@ -412,7 +505,7 @@ fn cmd_fit_tilts(o: &Opts) -> Result<(), String> {
 
 fn cmd_bench(o: &Opts) -> Result<(), String> {
     let k = Knowledge::new();
-    for t in [1, o.get("threads", threads())?] {
+    for t in [1, o.threads()?] {
         let start = Instant::now();
         let p = Posterior::compute_with(&k, t);
         println!(
@@ -449,8 +542,17 @@ fn cmd_bench(o: &Opts) -> Result<(), String> {
             }
         }
         let per = start.elapsed() / (reps * states.len().max(1)) as u32;
+        // The engine's whole decision at the same positions (search included).
+        let mut engine = ai::shooter("broadside").unwrap();
+        let (mut slowest, start) = (std::time::Duration::ZERO, Instant::now());
+        for k in states {
+            let t = Instant::now();
+            sum = sum.wrapping_add(engine.choose(k, &mut rng) as u64);
+            slowest = slowest.max(t.elapsed());
+        }
+        let per_move = start.elapsed() / states.len().max(1) as u32;
         println!(
-            "after {n:2} shots: {per:>10.2?} per posterior ({} positions, checksum {sum})",
+            "after {n:2} shots: {per:>10.2?} per posterior, {per_move:>10.2?} per move (slowest {slowest:.2?}; {} positions, checksum {sum})",
             states.len()
         );
     }
@@ -471,6 +573,7 @@ fn run() -> Result<(), String> {
             &o.str("shooter", "broadside"),
         ),
         Some("sim") => cmd_sim(&o),
+        Some("compare") => cmd_compare(&o),
         Some("duel") => cmd_duel(&o),
         Some("bench") => cmd_bench(&o),
         Some("analyze") => cmd_analyze(&o),
