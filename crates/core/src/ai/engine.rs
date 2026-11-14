@@ -59,12 +59,9 @@ pub struct Broadside {
     pub learner: Option<Learner>,
     /// In a game against an opponent: our fleet and what it knows of it.
     pub race: Option<(Layout, Knowledge)>,
-    /// What the opponent is believed to do about spacing its ships before
-    /// any of its fleets has been seen.
+    /// What the opponent is believed to do about spacing its ships; learns
+    /// from its fleets while `learner` is set.
     pub habits: Habits,
-    /// Its fleets seen so far, by kind (`Layout::contact`); counted only
-    /// while `learner` is set.
-    pub seen: [u32; KINDS],
 }
 
 /// Learns the opponent's placement habits by model selection.
@@ -192,14 +189,13 @@ impl Broadside {
             learner: Some(Learner::default()),
             race: None,
             habits: Habits::neutral(),
-            seen: [0; KINDS],
         }
     }
 
     /// The belief about the opponent's spacing now; `None` while it is what
     /// the rules alone say.
     pub fn spacing(&self) -> Option<[f64; KINDS]> {
-        let kinds = self.habits.after(&self.seen);
+        let kinds = self.habits.belief();
         (kinds != habits::neutral()).then_some(kinds)
     }
 
@@ -442,7 +438,7 @@ impl Shooter for Broadside {
     fn learn(&mut self, layout: &crate::game::Layout) {
         if let Some(l) = self.learner.as_mut() {
             self.prior = l.observe(layout);
-            self.seen[layout.contact()] += 1;
+            self.habits.observe(layout.contact());
         }
     }
 

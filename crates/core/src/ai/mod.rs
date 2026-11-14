@@ -118,6 +118,49 @@ impl Placer for SwapPlacer {
     }
 }
 
+/// Places against what the engine has learned: it keeps the engine's own
+/// belief from the fleets shown so far and picks the kind of fleet the engine
+/// now finds least likely, compared with uniform placement. The worst
+/// opponent for the habit learning that this family of habits allows.
+pub struct ContraryPlacer {
+    /// The engine's belief, kept in step with it.
+    engine: habits::Habits,
+}
+
+impl Default for ContraryPlacer {
+    fn default() -> Self {
+        Self {
+            engine: habits::Habits::neutral(),
+        }
+    }
+}
+
+impl Placer for ContraryPlacer {
+    fn name(&self) -> String {
+        "contrary".into()
+    }
+    fn place(&mut self, rng: &mut Rng) -> Layout {
+        let belief = self.engine.belief();
+        let neutral = habits::neutral();
+        // On ties the more marked habit: clumped, then spaced.
+        let kind = [2, 0, 1]
+            .into_iter()
+            .min_by(|&a, &b| (belief[a] / neutral[a]).total_cmp(&(belief[b] / neutral[b])))
+            .unwrap();
+        self.engine.observe(kind);
+        match kind {
+            0 => SpacedPlacer.place(rng),
+            2 => ClumpedPlacer.place(rng),
+            _ => loop {
+                let l = Layout::random(rng);
+                if l.contact() == 1 {
+                    return l;
+                }
+            },
+        }
+    }
+}
+
 pub const SHOOTERS: &[&str] = &[
     "broadside",
     "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples, race, spread; apart, corners, weight)",
@@ -135,6 +178,7 @@ pub const PLACERS: &[&str] = &[
     "spaced",
     "clumped",
     "swapN (spaced and clumped in turn, N games each)",
+    "contrary (the kind of fleet the engine expects least)",
     "tiltA (e.g. tilt1.5)",
     "mix:A=P,A=P,...",
 ];
@@ -225,6 +269,7 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
         "uniform" => Box::new(UniformPlacer),
         "spaced" => Box::new(SpacedPlacer),
         "clumped" => Box::new(ClumpedPlacer),
+        "contrary" => Box::new(ContraryPlacer::default()),
         n if n.starts_with("swap") => Box::new(SwapPlacer {
             every: n[4..].parse().ok().filter(|&n| n > 0)?,
             placed: 0,

@@ -41,38 +41,96 @@ pub fn neutral() -> [f64; KINDS] {
     kind_totals().map(|n| n as f64 / all)
 }
 
-/// A belief about the opponent's spacing, and how firmly it is held.
+/// A belief about the opponent's spacing that learns from its fleets
+/// without becoming a weakness.
+///
+/// Several views predict the kind of the next fleet: the starting belief,
+/// which never moves, and learners that count the fleets seen and trust the
+/// starting belief for more or fewer games. Each view is trusted by how well
+/// it has predicted the fleets so far, and the belief is their average by
+/// trust. An opponent with a habit is found out by the learners. One who
+/// places against whatever the learners expect makes them predict worse than
+/// the unmoved view, which then takes over: what such an opponent can gain
+/// is bounded, however long the match.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Habits {
-    /// Chance that a fleet is of each kind.
+    /// Chance that a fleet is of each kind, before any is seen.
     pub kinds: [f64; KINDS],
-    /// How many revealed fleets the belief counts for when fleets of the
-    /// opponent come to light.
+    /// How many revealed fleets that belief counts for; the learners use
+    /// multiples of it (`PACE`).
     pub games: f64,
+    seen: [u32; KINDS],
+    /// Share of trust per view: the unmoved one, then the learners.
+    trust: [f64; VIEWS],
 }
+
+const VIEWS: usize = 3;
+/// How firmly each learner holds the starting belief, in units of `games`.
+const PACE: [f64; VIEWS - 1] = [0.5, 2.0];
+/// Trust before any fleet is seen.
+const TRUST: [f64; VIEWS] = [0.5, 0.25, 0.25];
+/// Share of trust handed back to the starting split after every fleet, so
+/// that a view which was wrong for long can still recover when the opponent
+/// changes its ways.
+const RECOVERY: f64 = 0.05;
 
 impl Habits {
     /// Fleets seen before an opponent's habits are trusted over the rules.
     pub const GAMES: f64 = 2.0;
 
     pub fn neutral() -> Self {
+        Self::starting(neutral(), Self::GAMES)
+    }
+
+    pub fn starting(kinds: [f64; KINDS], games: f64) -> Self {
         Self {
-            kinds: neutral(),
-            games: Self::GAMES,
+            kinds,
+            games,
+            seen: [0; KINDS],
+            trust: TRUST,
         }
     }
 
-    /// The belief after seeing `seen[kind]` fleets of each kind.
-    pub fn after(&self, seen: &[u32; KINDS]) -> [f64; KINDS] {
-        let n: u32 = seen.iter().sum();
-        if n == 0 {
+    /// What view `i` expects of the next fleet.
+    fn view(&self, i: usize) -> [f64; KINDS] {
+        let n: u32 = self.seen.iter().sum();
+        if i == 0 || n == 0 {
+            return self.kinds;
+        }
+        let games = self.games * PACE[i - 1];
+        let mut out = [0.0; KINDS];
+        for (o, (k, s)) in out.iter_mut().zip(self.kinds.iter().zip(self.seen)) {
+            *o = (games * k + s as f64) / (games + n as f64);
+        }
+        out
+    }
+
+    /// The chance of each kind for the opponent's next fleet.
+    pub fn belief(&self) -> [f64; KINDS] {
+        if self.seen == [0; KINDS] {
             return self.kinds;
         }
         let mut out = [0.0; KINDS];
-        for (o, (k, s)) in out.iter_mut().zip(self.kinds.iter().zip(seen)) {
-            *o = (self.games * k + *s as f64) / (self.games + n as f64);
+        for (i, t) in self.trust.iter().enumerate() {
+            for (o, v) in out.iter_mut().zip(self.view(i)) {
+                *o += t * v;
+            }
         }
         out
+    }
+
+    /// A fleet of the opponent came to light.
+    pub fn observe(&mut self, kind: usize) {
+        let mut trust = [0.0; VIEWS];
+        for (i, t) in trust.iter_mut().enumerate() {
+            // A view sure of the opposite is not written off for good.
+            *t = self.trust[i] * self.view(i)[kind].max(1e-6);
+        }
+        let z: f64 = trust.iter().sum();
+        for (i, t) in trust.iter().enumerate() {
+            self.trust[i] = (1.0 - RECOVERY) * t / z + RECOVERY * TRUST[i];
+        }
+        self.seen[kind] += 1;
     }
 }
 
@@ -365,6 +423,41 @@ mod tests {
             b += play_game(&mut spaced, layout, &mut Rng::new(i)).len();
         }
         assert!(b + 60 < a, "{b} against {a} shots");
+    }
+
+    /// How much worse than the rules alone the belief predicts a run of
+    /// fleets, in nats (the sum of ln(neutral / belief) over their kinds).
+    fn regret(kinds: impl Iterator<Item = usize>) -> f64 {
+        let mut h = Habits::neutral();
+        let mut total = 0.0;
+        for kind in kinds {
+            total += (neutral()[kind] / h.belief()[kind]).ln();
+            h.observe(kind);
+        }
+        total
+    }
+
+    #[test]
+    fn placing_against_the_belief_gains_little() {
+        // The opponent that always shows the kind the engine expects least.
+        let mut mirror = Habits::neutral();
+        let contrary = std::iter::repeat_with(move || {
+            let b = mirror.belief();
+            let kind = [2, 0, 1]
+                .into_iter()
+                .min_by(|&x, &y| (b[x] / neutral()[x]).total_cmp(&(b[y] / neutral()[y])))
+                .unwrap();
+            mirror.observe(kind);
+            kind
+        });
+        let lost = regret(contrary.take(200));
+        assert!(lost < 5.0, "{lost}");
+        // A real habit is worth far more than that.
+        let gained = -regret(std::iter::repeat_n(0, 20));
+        assert!(gained > 20.0, "{gained}");
+        // Changing habit every five fleets still leaves the engine ahead.
+        let swapped = -regret((0..40).map(|i| if i / 5 % 2 == 0 { 0 } else { 2 }));
+        assert!(swapped > 0.0, "{swapped}");
     }
 
     #[test]
