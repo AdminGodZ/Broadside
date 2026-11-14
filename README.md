@@ -113,6 +113,9 @@ What the measurements say about the search:
   altered the result of 135 games in 20,000 and the mean by 0.000 ± 0.001. Comparing shots by
   greedy play to the end is already close to optimal there. The solver stays on for the
   smallest positions, where it is free and its answers are provably right.
+- Thinking again at every later position helps, at a price: with `deep=300` (lines of play
+  through positions of up to 300 placements try the likeliest cells again instead of playing
+  greedily) the 30,000 setting gained 0.07 ± 0.03 shots for ten times the time. Off by default.
 - A mean below 40 is not in sight. From no search to the deepest search measured is 0.56
   shots, and each further step costs about seven times the last one's time for a tenth of a
   shot.
