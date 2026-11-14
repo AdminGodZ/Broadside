@@ -192,6 +192,28 @@ impl Broadside {
         }
     }
 
+    /// The chance of a ship on each unshot cell as the engine sees it, with
+    /// everything it has learned about the opponent (0 for shot cells).
+    pub fn chances(&self, k: &Knowledge) -> [f64; CELLS] {
+        let p = Posterior::cached(k, self.threads);
+        let prior = self.prior.as_deref();
+        let mix = self
+            .spacing()
+            .and_then(|kinds| Mix::new(k, &p, &kinds, self.threads));
+        // Scores are chances under a prior, weights of layouts without.
+        let (scores, total) = match (&mix, prior) {
+            (Some(m), _) => (m.scores(prior, k), m.weight()),
+            (None, Some(_)) => (cell_scores(&p, prior, k), 1.0),
+            (None, None) => (cell_scores(&p, None, k), p.layouts as f64),
+        };
+        let unknown = k.unknown();
+        let mut out = [0.0; CELLS];
+        for c in (0..CELLS).filter(|&c| unknown.has(c) && total > 0.0) {
+            out[c] = (scores[c] / total).min(1.0);
+        }
+        out
+    }
+
     /// The belief about the opponent's spacing now; `None` while it is what
     /// the rules alone say.
     pub fn spacing(&self) -> Option<[f64; KINDS]> {

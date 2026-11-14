@@ -8,12 +8,13 @@
 //! The engine and its placer persist across games, so over a session it
 //! learns where the player likes to put ships and where they shoot.
 
+use broadside_core::ai::engine::Broadside;
 use broadside_core::ai::{self, Placer, Shooter};
-use broadside_core::{Board, Knowledge, Layout, Outcome, Posterior, Rng};
+use broadside_core::{Board, Knowledge, Layout, Outcome, Rng};
 use std::cell::RefCell;
 
 struct Session {
-    shooter: Box<dyn Shooter>,
+    shooter: Broadside,
     placer: Box<dyn Placer>,
     rng: Rng,
     /// The player's fleet once placed, and a random one offered to them.
@@ -56,7 +57,7 @@ pub extern "C" fn bs_new_game(seed: f64) {
             let mut rng = Rng::new(seed as u64);
             let offer = Layout::random(&mut rng);
             Session {
-                shooter: ai::shooter("broadside").expect("built-in engine"),
+                shooter: Broadside::new(),
                 placer: ai::placer("broadside").expect("built-in placer"),
                 rng,
                 fleet: None,
@@ -184,15 +185,19 @@ pub extern "C" fn bs_finish() {
 #[unsafe(no_mangle)]
 pub extern "C" fn bs_update_heat() {
     with(|s| {
-        let p = Posterior::cached(&s.engine, 1);
-        for (c, h) in s.heat.iter_mut().enumerate() {
-            *h = if s.engine.shots().has(c) {
-                0.0
-            } else {
-                p.prob(c) as f32
-            };
+        let chances = s.shooter.chances(&s.engine);
+        for (h, c) in s.heat.iter_mut().zip(chances) {
+            *h = c as f32;
         }
     });
+}
+
+/// What the engine expects of the player's next fleet: the chance that its
+/// ships all lie apart (`kind` 0), that some meet at a corner but none
+/// share an edge (1), or that some share an edge (2).
+#[unsafe(no_mangle)]
+pub extern "C" fn bs_spacing(kind: i32) -> f32 {
+    with(|s| s.shooter.habits.belief()[kind as usize] as f32)
 }
 
 /// The chance, as the engine sees it, that `cell` of the player's fleet

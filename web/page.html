@@ -179,7 +179,7 @@ button:disabled { opacity: .4; cursor: default; }
 
   <section class="rules">
     <p><strong>Rules.</strong> Standard fleet on a 10×10 chart: Carrier 5, Battleship 4, Cruiser 3, Submarine 3, Destroyer 2. Ships may touch but not overlap. A hit does not say which ship it struck; you hear which one when it sinks. You and the engine alternate single shots, and whoever sinks the other fleet first wins.</p>
-    <p>The engine keeps learning through this session: where you like to hide ships, and which waters you search last. Reloading the page resets it.</p>
+    <p>The engine keeps learning through this session: where you like to hide ships, whether you keep them apart or let them touch, and which waters you search last. It also notices when you change your ways. Reloading the page resets it.</p>
   </section>
 </div>
 
@@ -314,6 +314,8 @@ function finish(youWon) {
   b.innerHTML = youWon
     ? `<h3>Victory in ${S.you.count} shots</h3><p>You sank the engine's fleet first. It had ${17 - [...S.it.shots.values()].filter(o => o > 0).length} of your ship cells still to find.</p>`
     : `<h3>The engine wins in ${S.it.count} shots</h3><p>You had ${left} ship cell${left === 1 ? "" : "s"} left to find. Its fleet is shown on the left.</p>`;
+  const pct = k => Math.round(100 * E.bs_spacing(k));
+  b.innerHTML += `<p class="read">What it now expects of your next fleet: ships apart ${pct(0)}%, touching only at corners ${pct(1)}%, side by side ${pct(2)}%. Random placement would give 13%, 6% and 81%.</p>`;
   b.hidden = false;
   render();
 }

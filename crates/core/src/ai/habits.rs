@@ -189,6 +189,14 @@ impl Mix {
         }
     }
 
+    /// Weight of all the layouts the belief allows, in layouts under
+    /// uniform placement.
+    pub fn weight(&self) -> f64 {
+        (0..KINDS)
+            .map(|kind| self.density[kind] * Self::kind(&self.nested, kind).layouts as f64)
+            .sum()
+    }
+
     /// The chance of each kind given what is known.
     pub fn kinds(&self) -> [f64; KINDS] {
         let mut out = [0.0; KINDS];
@@ -458,6 +466,37 @@ mod tests {
         // Changing habit every five fleets still leaves the engine ahead.
         let swapped = -regret((0..40).map(|i| if i / 5 % 2 == 0 { 0 } else { 2 }));
         assert!(swapped > 0.0, "{swapped}");
+    }
+
+    #[test]
+    fn chances_add_up_to_the_ship_cells_left() {
+        let mut rng = Rng::new(8);
+        let mut believer = Broadside::new();
+        believer.habits.kinds = [0.7, 0.1, 0.2];
+        for _ in 0..20 {
+            let k = state(SpacedPlacer.place(&mut rng), 40, &mut rng);
+            if k.won() {
+                continue;
+            }
+            let left = (crate::fleet::FLEET_CELLS - k.hits.count()) as f64;
+            for engine in [&Broadside::new(), &believer] {
+                let chances = engine.chances(&k);
+                assert!((chances.iter().sum::<f64>() - left).abs() < 1e-6);
+                assert!(Bits(k.shots().0).all(|c| chances[c] == 0.0));
+            }
+            // Next to a sunk ship the believer expects less than the rules.
+            let p = Posterior::compute(&k);
+            let (plain, spaced) = (Broadside::new().chances(&k), believer.chances(&k));
+            for s in (0..SHIPS).filter(|&s| k.sunk[s].is_some()) {
+                let Some(slot) = (0..p.ships[s].len()).find(|&x| p.ships[s][x] == p.layouts) else {
+                    continue;
+                };
+                let ship = crate::fleet::SEGMENTS[crate::fleet::LENGTHS[s]][slot];
+                for c in Bits(crate::bitboard::neighbours4(ship) & k.unknown().0) {
+                    assert!(spaced[c] <= plain[c] + 1e-12, "{k:?}");
+                }
+            }
+        }
     }
 
     #[test]
