@@ -111,6 +111,31 @@ better. Times are per game on a 24-core machine running one game per core. Singl
 about ±8.6 shots (one standard deviation), so one game between two good players is mostly luck;
 a match is not.
 
+### Head to head against a human-style player
+
+The parity bot hunts on a checkerboard and finishes ships around its hits, much like a careful human.
+Over 10,000 games Broadside won **70.8% ± 0.45** (7,076 to 2,924):
+
+<p align="center">
+  <img src="assets/duel-parity.svg" alt="Shots-to-win distributions of Broadside (mean 44.0) and the parity bot (mean 50.8), and the parity bot's chance to win matches of 1 to 51 games" width="100%">
+</p>
+
+| | Broadside | parity |
+|---|---:|---:|
+| Games won | 7,076 | 2,924 |
+| Mean shots to win | 44.03 | 50.77 |
+| Median (10th–90th percentile) | 43 (33–56) | 51 (39–62) |
+| Fewest / most shots | 19 / 68 | 20 / 78 |
+
+The two curves overlap so much that the weaker side still takes almost 3 games in 10. Skill, the 6.7
+shot gap, accounts for about 23% of the outcome of a single game (the gap squared, as a share of
+itself plus both sides' game-to-game variance). Over a match it adds up: the parity bot wins a
+best-of-11 about 7 times in 100 and a best-of-51 less than once in 1,000.
+
+<sub>`broadside duel broadside parity --games 10000 --seed 31 --dump FILE`, uniform placement, no
+learning between games, 4 min 16 s on 24 cores. The chart is drawn by `assets/make_charts.py`
+from `assets/data/duel-parity.csv`.</sub>
+
 <details>
 <summary><b>What the measurements say about the search</b></summary>
 
@@ -186,7 +211,7 @@ crates/
   cli/    broadside: the command-line front end
   wasm/   broadside-wasm: the engine for the browser, a plain C ABI over WebAssembly
 web/      the browser game (page.html + build.sh → dist/broadside.html)
-assets/   logo and banner (make_logo.py draws them)
+assets/   logo, banner and charts (make_logo.py, make_charts.py draw them)
 ```
 
 Boards are `u128` bitboards, bit `row * 10 + col`. Release builds use fat LTO and `target-cpu=native`.
