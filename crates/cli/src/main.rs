@@ -421,6 +421,39 @@ fn cmd_bench(o: &Opts) -> Result<(), String> {
             start.elapsed()
         );
     }
+    // Realistic positions: greedy games against uniform layouts, sampled
+    // after a given number of shots. Timed single-threaded, uncached.
+    let mut rng = Rng::new(o.get("seed", 1u64)?);
+    let mut shooter = ai::shooter("greedy").unwrap();
+    let mut by_phase: Vec<(u32, Vec<Knowledge>)> =
+        [10, 20, 30, 40, 50].map(|n| (n, Vec::new())).into();
+    for _ in 0..200 {
+        let mut board = Board::new(broadside_core::Layout::random(&mut rng));
+        let mut k = Knowledge::new();
+        while !k.won() {
+            if let Some((_, v)) = by_phase.iter_mut().find(|(n, _)| *n == k.shots_fired()) {
+                v.push(k);
+            }
+            let c = shooter.choose(&k, &mut rng);
+            let out = board.fire(c);
+            k.record(c, out);
+        }
+    }
+    for (n, states) in &by_phase {
+        let reps = if *n <= 10 { 1 } else { 20 };
+        let start = Instant::now();
+        let mut sum = 0u64;
+        for _ in 0..reps {
+            for k in states {
+                sum = sum.wrapping_add(Posterior::compute(k).layouts);
+            }
+        }
+        let per = start.elapsed() / (reps * states.len().max(1)) as u32;
+        println!(
+            "after {n:2} shots: {per:>10.2?} per posterior ({} positions, checksum {sum})",
+            states.len()
+        );
+    }
     Ok(())
 }
 

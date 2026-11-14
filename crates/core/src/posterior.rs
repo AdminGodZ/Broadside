@@ -309,76 +309,102 @@ impl Solver {
 
     /// Ships in `afloat` placed anywhere inside `free`, touching no hit.
     fn free(&mut self, free: u128, afloat: u8) -> u64 {
-        let ships: Vec<usize> = Bits(afloat as u128).collect();
-        let k = ships.len();
+        // Fixed-size bookkeeping: this runs at every leaf of the search and
+        // inside rollouts, so it must not allocate.
+        let mut ships = [0usize; SHIPS];
+        let mut k = 0;
+        for s in Bits(afloat as u128) {
+            ships[k] = s;
+            k += 1;
+        }
         if k == 0 {
             return 1;
         }
-        let lens: Vec<usize> = ships.iter().map(|&s| LENGTHS[s]).collect();
-        let n: Vec<u64> = lens
-            .iter()
-            .map(|&l| {
-                let (h, v) = starts(l, free);
-                (h.count_ones() + v.count_ones()) as u64
-            })
-            .collect();
-        if n.contains(&0) {
-            return 0;
+        let mut lens = [0usize; SHIPS];
+        let mut n = [0u64; SHIPS];
+        for i in 0..k {
+            lens[i] = LENGTHS[ships[i]];
+            let (h, v) = starts(lens[i], free);
+            n[i] = (h.count_ones() + v.count_ones()) as u64;
+            if n[i] == 0 {
+                return 0;
+            }
         }
+        let lengths_of = |set: u32| {
+            (0..k)
+                .filter(|&i| set >> i & 1 == 1)
+                .fold(0u8, |m, i| m | 1 << lens[i])
+        };
+        let all_ships = (1u32 << k) - 1;
 
         // Pick runs (choice of inner ships) until every length is an outer
         // ship of some run; outer loops are where per-placement counts come from.
-        let inner_size = if k >= 3 { 2 } else { k - 1 };
-        let mut runs: Vec<Vec<usize>> = Vec::new(); // inner indices into `ships`
+        let inner_size = if k >= 3 { 2 } else { k as u32 - 1 };
+        let mut runs = [0u32; SHIPS]; // inner ship sets, as bitmasks over 0..k
+        let mut n_runs = 0;
         let mut covered = 0u8; // by length
-        let all: u8 = lens.iter().fold(0, |m, &l| m | 1 << l);
-        while covered != all {
-            let mut best: Option<(f64, Vec<usize>)> = None;
-            for inner in subsets(k, inner_size) {
-                let new = (0..k)
-                    .filter(|i| !inner.contains(i))
-                    .fold(0u8, |m, i| m | 1 << lens[i])
-                    & !covered;
+        while covered != lengths_of(all_ships) {
+            let mut best = (f64::INFINITY, 0u32);
+            for inner in (0..=all_ships).filter(|b| b.count_ones() == inner_size) {
+                let outer = all_ships & !inner;
+                let new = lengths_of(outer) & !covered;
                 if new == 0 {
                     continue;
                 }
-                let outer_work: f64 = (0..k)
-                    .filter(|i| !inner.contains(i))
+                let work: f64 = (0..k)
+                    .filter(|&i| outer >> i & 1 == 1)
                     .map(|i| n[i] as f64)
                     .product();
-                let il: Vec<usize> = inner.iter().map(|&i| lens[i]).collect();
-                let score = outer_work * inner_cost(&il) / new.count_ones() as f64;
-                if best.as_ref().is_none_or(|(b, _)| score < *b) {
-                    best = Some((score, inner));
+                let score = work * inner_cost(&lens, inner) / new.count_ones() as f64;
+                if score < best.0 {
+                    best = (score, inner);
                 }
             }
-            let (_, inner) = best.expect("some run always covers a new length");
-            covered |= (0..k)
-                .filter(|i| !inner.contains(i))
-                .fold(0u8, |m, i| m | 1 << lens[i]);
-            runs.push(inner);
+            covered |= lengths_of(all_ships & !best.1);
+            runs[n_runs] = best.1;
+            n_runs += 1;
         }
 
         let mut z_total = None;
         let mut done = 0u8;
-        for inner in runs {
-            let outer: Vec<usize> = (0..k).filter(|i| !inner.contains(i)).collect();
-            let outer_lens: Vec<usize> = outer.iter().map(|&i| lens[i]).collect();
-            let inner_lens: Vec<usize> = inner.iter().map(|&i| lens[i]).collect();
-            let work: f64 =
-                outer.iter().map(|&i| n[i] as f64).product::<f64>() * inner_cost(&inner_lens);
+        let mut local = [[0u64; SLOTS]; 3];
+        for &inner in &runs[..n_runs] {
+            let (mut outer, mut n_outer) = ([0usize; 3], 0);
+            let (mut outer_lens, mut inner_lens) = ([0usize; 3], [0usize; 2]);
+            let mut n_inner = 0;
+            let mut work = inner_cost(&lens, inner);
+            for i in 0..k {
+                if inner >> i & 1 == 1 {
+                    inner_lens[n_inner] = lens[i];
+                    n_inner += 1;
+                } else {
+                    outer[n_outer] = i;
+                    outer_lens[n_outer] = lens[i];
+                    n_outer += 1;
+                    work *= n[i] as f64;
+                }
+            }
             let threads = if work > 2e6 { self.threads } else { 1 };
-            let mut local = vec![[0u64; SLOTS]; outer.len()];
-            let z = exec_parallel(&outer_lens, &inner_lens, free, &mut local, threads);
+            let local = &mut local[..n_outer];
+            for row in local.iter_mut() {
+                row.fill(0);
+            }
+            let z = exec_parallel(
+                &outer_lens[..n_outer],
+                &inner_lens[..n_inner],
+                free,
+                local,
+                threads,
+            );
             debug_assert!(z_total.is_none_or(|t| t == z));
             z_total = Some(z);
-            for (pos, &i) in outer.iter().enumerate() {
+            for (pos, &i) in outer[..n_outer].iter().enumerate() {
                 let len = lens[i];
                 if done >> len & 1 == 1 {
                     continue;
                 }
                 done |= 1 << len;
-                for &ship in ships.iter().filter(|&&s| LENGTHS[s] == len) {
+                for &ship in ships[..k].iter().filter(|&&s| LENGTHS[s] == len) {
                     for (acc, &x) in self.w[ship].iter_mut().zip(local[pos].iter()) {
                         *acc += x;
                     }
@@ -389,18 +415,11 @@ impl Solver {
     }
 }
 
-/// All size-`m` subsets of `0..k`, as sorted index lists.
-fn subsets(k: usize, m: usize) -> Vec<Vec<usize>> {
-    (0u32..1 << k)
-        .filter(|b| b.count_ones() as usize == m)
-        .map(|b| (0..k).filter(|i| b >> i & 1 == 1).collect())
-        .collect()
-}
-
-/// Relative cost of the closed-form count for the inner ships.
-fn inner_cost(lens: &[usize]) -> f64 {
-    match lens {
-        [a, b] => (2 * (a + b - 1) + 2 * a * b + 6) as f64,
+/// Relative cost of the closed-form count for the `inner` ships (bitmask).
+fn inner_cost(lens: &[usize; SHIPS], inner: u32) -> f64 {
+    let mut l = (0..SHIPS).filter(|&i| inner >> i & 1 == 1).map(|i| lens[i]);
+    match (l.next(), l.next()) {
+        (Some(a), Some(b)) => (2 * (a + b - 1) + 2 * a * b + 6) as f64,
         _ => 2.0,
     }
 }
