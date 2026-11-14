@@ -23,6 +23,7 @@ Commands:
   compare  Two shooters on the same layouts: compare A B [--placer P]
   duel     Head-to-head win rate: duel A B [--placer-a P] [--placer-b P]
              --match N  play matches of N games in which both sides may learn
+             --dump FILE  also write both sides' shots-to-win histograms as CSV
   analyze  Where a shooter's misses happen
   matrix   Placement game: placer tilt vs shooter's assumed tilt
              --alphas 0,1,2  --base density|greedy|broadside
@@ -276,6 +277,13 @@ fn cmd_duel(o: &Opts) -> Result<(), String> {
     print_stats(&format!("  {a} shots"), &r.a_stats);
     print_stats(&format!("  {b} shots"), &r.b_stats);
     println!("seed {seed}");
+    if let Some(path) = o.flags.get("dump") {
+        let mut csv = String::from("shots,a_games,b_games\n");
+        for (n, (x, y)) in r.a_stats.hist.iter().zip(&r.b_stats.hist).enumerate() {
+            csv += &format!("{n},{x},{y}\n");
+        }
+        std::fs::write(path, csv).map_err(|e| format!("cannot write {path}: {e}"))?;
+    }
     Ok(())
 }
 
