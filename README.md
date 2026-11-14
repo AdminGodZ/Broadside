@@ -73,10 +73,12 @@ Tests: `cargo test`, slow ones with `cargo test --release -- --ignored`.
 ## Roadmap
 
 1. ~~Rules engine~~, ~~baseline AIs~~, ~~exact probability density~~, ~~simulator~~, ~~playable CLI~~.
-2. **Stronger play** (in progress): endgame rollout search (done), placement game (done, tuning),
-   deeper search earlier in the game, opponent modeling across a match (needs a weighted
-   posterior), race-aware shooting.
-3. **Later, maybe**: WebAssembly build for a browser UI; self-play toward an unexploitable strategy.
+2. ~~Endgame search~~, ~~placement game~~, ~~opponent modelling across a match~~.
+3. **Open**: search before the afloat ships can be listed (three or more ships in open water;
+   sampled rollouts exist behind `afloat=N` but are unproven), race-aware shooting (play for the
+   win, not the fewest shots, once the opponent is close), an exact prior-weighted posterior
+   before the search starts, a shooter that tracks a mixed placer within a game.
+4. **Later, maybe**: WebAssembly build for a browser UI.
 
 ## Reference numbers
 
@@ -87,7 +89,7 @@ Tests: `cargo test`, slow ones with `cargo test --release -- --ignored`.
 | Fleet layouts, 3-ships interchangeable | 15,046,987,768 |
 | Minimum possible shots | 17 |
 
-Mean shots to sink a uniformly placed fleet (10,000+ games):
+Mean shots to sink a uniformly placed fleet (100,000 games each unless noted):
 
 | Shooter | Mean |
 |---|---|
@@ -95,10 +97,30 @@ Mean shots to sink a uniformly placed fleet (10,000+ games):
 | hunt-target | 59.6 |
 | parity | 50.8 |
 | density (classic probability density) | 44.8 |
-| greedy (exact posterior) | 44.5 |
-| broadside (exact posterior + endgame rollouts) | 44.3 |
+| greedy (exact posterior, no search) | 44.60 ± 0.03 |
+| broadside, search up to 30,000 placements (4.6 ms/game) | 44.15 ± 0.03 |
+| broadside, default: up to 200,000 placements (38 ms/game) | about 44.04 |
 
-Head-to-head (`broadside` with its own placement, matches of 100 games so both sides may learn):
+The default was measured against the 30,000 setting on the same 20,000 layouts: 0.11 ± 0.04
+shots better (44.12 against 44.24 on those games). Times are per game on a 24-core machine
+running one game per core.
+
+What the measurements say about the search:
+
+- Reach is what pays. Each step in how many placements the search will list (400, 3,000,
+  30,000, 200,000) saved about another 0.1 shots; the cost grows about as fast as the limit.
+- Solving small positions optimally changes almost nothing: with up to 24 placements left it
+  altered the result of 135 games in 20,000 and the mean by 0.000 ± 0.001. Comparing shots by
+  greedy play to the end is already close to optimal there. The solver stays on for the
+  smallest positions, where it is free and its answers are provably right.
+- A mean below 40 is not in sight. From no search to the deepest search measured is 0.56
+  shots, and each further step costs about seven times the last one's time for a tenth of a
+  shot.
+
+Head-to-head (`broadside` with its own placement, matches of 100 games so both sides may
+learn). These were measured before the search rewrite and under the old match rules, in which
+a placer saw every shot the opponent would have fired, also after the game was over. A rerun
+under the current rules is pending.
 
 | Opponent | Broadside wins |
 |---|---|
