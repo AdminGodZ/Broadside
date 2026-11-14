@@ -74,10 +74,10 @@ Tests: `cargo test`, slow ones with `cargo test --release -- --ignored`.
 
 1. ~~Rules engine~~, ~~baseline AIs~~, ~~exact probability density~~, ~~simulator~~, ~~playable CLI~~.
 2. ~~Endgame search~~, ~~placement game~~, ~~opponent modelling across a match~~.
-3. **Open**: search before the afloat ships can be listed (three or more ships in open water;
-   sampled rollouts exist behind `afloat=N` but are unproven), race-aware shooting (play for the
-   win, not the fewest shots, once the opponent is close), an exact prior-weighted posterior
-   before the search starts, a shooter that tracks a mixed placer within a game.
+3. **Tried, no gain measured** (kept behind settings, off by default): search over sampled
+   placements before the afloat ships can be listed (`afloat=N`), race-aware shooting (`race=N`).
+   **Open**: an exact prior-weighted posterior before the search starts, a shooter that tracks a
+   mixed placer within a game, tests against outside engines and human players.
 4. **Later, maybe**: WebAssembly build for a browser UI.
 
 ## Reference numbers
@@ -116,6 +116,15 @@ What the measurements say about the search:
 - Thinking again at every later position helps, at a price: with `deep=300` (lines of play
   through positions of up to 300 placements try the likeliest cells again instead of playing
   greedily) the 30,000 setting gained 0.07 ± 0.03 shots for ten times the time. Off by default.
+- Searching earlier does not pay. With three ships afloat and too many placements to list,
+  searching over 4,000 sampled placements (`afloat=3`) changed the mean by -0.01 ± 0.03 shots
+  (1,000 samples: -0.02 ± 0.02), on 10,000 games each.
+- Playing for the win does not pay either. With `race=16` the engine estimates how many shots
+  the opponent still needs (rollouts of its play against our real fleet) and, while the race
+  is open, picks the shot most likely to finish first. Against the plain engine, over 40,000
+  games each, it won 49.78%, 49.73% and 49.78% (± 0.25) for opponent spreads of 0, 1.5 and 3
+  shots, while needing 0.2 more shots per game. Games between strong shooters are rarely
+  decided by a shot that trades expected shots for variance.
 - A mean below 40 is not in sight. From no search to the deepest search measured is 0.56
   shots, and each further step costs about seven times the last one's time for a tenth of a
   shot.

@@ -936,6 +936,19 @@ mod tests {
     }
 
     #[test]
+    fn costing_each_shot_plays_for_the_fewest_shots() {
+        let shots: Vec<f64> = (0..=CELLS + 1).map(|t| t as f64).collect();
+        for k in late_states(14, 40, 3000) {
+            let w = worlds(&k, &Posterior::compute(&k), 3000, None).unwrap();
+            let plain = Tree::new(&w, cfg(0, 0)).choose(k.hits.0, 1);
+            assert_eq!(
+                Tree::new(&w, cfg(0, 0)).choose_for(k.hits.0, 2, &shots),
+                plain
+            );
+        }
+    }
+
+    #[test]
     fn stronger_continuations_never_cost_shots() {
         for k in late_states(13, 40, 300) {
             let w = worlds(&k, &Posterior::compute(&k), 300, None).unwrap();
