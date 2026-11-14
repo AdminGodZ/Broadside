@@ -16,4 +16,5 @@ See README.md for the roadmap and reference numbers.
 
 - `cargo test` / `cargo test --release -- --ignored` (slow tests)
 - `cargo run --release -p broadside -- count`
+- `cargo run --release -p broadside -- compare A B` (paired comparison of two shooters)
 - `cargo clippy --all-targets`

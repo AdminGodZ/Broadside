@@ -35,9 +35,16 @@ pub struct World {
     pub weight: f64,
 }
 
-/// Every world consistent with `k`, or `None` if there are more than `limit`.
-pub fn worlds(k: &Knowledge, limit: usize, prior: Option<&Tilt>) -> Option<Vec<World>> {
-    let mut out: Vec<World> = Posterior::enumerate_afloat(k, limit)?
+/// Every world consistent with `k` (whose posterior is `p`), or `None` if
+/// there are more than `limit`.
+pub fn worlds(
+    k: &Knowledge,
+    p: &Posterior,
+    limit: usize,
+    prior: Option<&Tilt>,
+) -> Option<Vec<World>> {
+    let mut out: Vec<World> = p
+        .enumerate_afloat(k, limit)?
         .into_iter()
         .map(|(slots, layouts)| {
             let mut ships = [0u128; SHIPS];
@@ -151,6 +158,10 @@ type Table<V> = HashMap<(u128, u128), V, BuildHasherDefault<Mix>>;
 
 pub struct Tree<'a> {
     worlds: &'a [World],
+    /// The worlds' `all` and `weight`, packed: the loops over big positions
+    /// touch nothing else.
+    all: Vec<u128>,
+    weight: Vec<f64>,
     cfg: Search,
     /// Positions the exact solver may still open for this decision.
     budget: u64,
@@ -162,6 +173,8 @@ pub struct Tree<'a> {
     solved: Table<(f64, u8)>,
     /// `value` of positions, without and with improvement.
     values: [Table<f64>; 2],
+    /// Scratch for `split`: the outcome per world.
+    outcomes: Vec<u8>,
 }
 
 /// The exact solver's budget for a whole decision, in solves' worth.
@@ -175,31 +188,76 @@ impl<'a> Tree<'a> {
         let tag = |_| (rng.next_u64() as u128) << 64 | rng.next_u64() as u128;
         Self {
             worlds,
+            all: worlds.iter().map(|w| w.all).collect(),
+            weight: worlds.iter().map(|w| w.weight).collect(),
             cfg,
             budget: cfg.solve_nodes.saturating_mul(SOLVE_ATTEMPTS),
             tags: (0..worlds.len()).map(tag).collect(),
             solved: Table::default(),
             values: Default::default(),
+            outcomes: vec![0; worlds.len()],
         }
     }
 
     /// Sorts the worlds of `from` into `to` by the outcome of a shot at `x`;
     /// returns where each outcome's group starts.
-    fn split(&self, x: usize, hits: u128, from: &[u32], to: &mut [u32]) -> [usize; OUTCOMES + 1] {
+    fn split(
+        &mut self,
+        x: usize,
+        hits: u128,
+        from: &[u32],
+        to: &mut [u32],
+    ) -> [usize; OUTCOMES + 1] {
         let mut cuts = [0usize; OUTCOMES + 1];
-        for &i in from {
-            cuts[outcome(&self.worlds[i as usize], x, hits) + 1] += 1;
+        for (&i, o) in from.iter().zip(self.outcomes.iter_mut()) {
+            // Most worlds miss; only the others need a look at their ships.
+            *o = if self.all[i as usize] >> x & 1 == 0 {
+                0
+            } else {
+                outcome(&self.worlds[i as usize], x, hits) as u8
+            };
+            cuts[*o as usize + 1] += 1;
         }
         for o in 0..OUTCOMES {
             cuts[o + 1] += cuts[o];
         }
         let mut at = cuts;
-        for &i in from {
-            let o = outcome(&self.worlds[i as usize], x, hits);
-            to[at[o]] = i;
-            at[o] += 1;
+        for (&i, &o) in from.iter().zip(&self.outcomes) {
+            to[at[o as usize]] = i;
+            at[o as usize] += 1;
         }
         cuts
+    }
+
+    /// `Summary` of the worlds in `idx`, and their key for the tables.
+    fn scan(&self, idx: &[u32], hits: u128) -> (Summary, u128) {
+        let (mut weight, mut and, mut or, mut key) = (0.0, u128::MAX, 0u128, 0u128);
+        for &i in idx {
+            let i = i as usize;
+            weight += self.weight[i];
+            and &= self.all[i];
+            or |= self.all[i];
+            key ^= self.tags[i];
+        }
+        // Only a cell every world holds can be one every world gives to
+        // the same ship; mostly there is none, and the ships stay untouched.
+        let mut forced = 0;
+        if and & !hits != 0 {
+            let mut same = [u128::MAX; SHIPS];
+            for &i in idx {
+                for (a, m) in same.iter_mut().zip(self.worlds[i as usize].ships) {
+                    *a &= m;
+                }
+            }
+            forced = same.iter().fold(0, |a, m| a | m) & !hits;
+        }
+        let s = Summary {
+            weight,
+            and: and & !hits,
+            or: or & !hits,
+            forced,
+        };
+        (s, key)
     }
 
     /// The shot to fire with `hits` standing, given every world: the cell.
@@ -249,11 +307,11 @@ impl<'a> Tree<'a> {
         hits: u128,
         improve: bool,
     ) -> f64 {
-        let s = Summary::of(x.iter().map(|&i| &self.worlds[i as usize]), hits);
+        let (s, key) = self.scan(x, hits);
         if let Some(v) = s.settled() {
             return v;
         }
-        let key = (x.iter().fold(0, |a, &i| a ^ self.tags[i as usize]), hits);
+        let key = (key, hits);
         if x.len() >= TABLE_MIN
             && let Some(&v) = self.values[improve as usize].get(&key)
         {
@@ -282,11 +340,18 @@ impl<'a> Tree<'a> {
         let cell = if s.forced != 0 {
             s.forced.trailing_zeros() as usize
         } else {
-            let occ = occupancy(x.iter().map(|&i| &self.worlds[i as usize]), hits);
-            let cells = ranked(&occ, s.or);
+            let mut occ = [0.0; CELLS];
+            for &i in x.iter() {
+                for c in Bits(self.all[i as usize] & !hits) {
+                    occ[c] += self.weight[i as usize];
+                }
+            }
             if improve && x.len() <= self.cfg.deep_worlds {
                 let mut best = (f64::INFINITY, 0);
-                for c in cells.into_iter().take(self.cfg.candidates.max(1)) {
+                for c in ranked(&occ, s.or)
+                    .into_iter()
+                    .take(self.cfg.candidates.max(1))
+                {
                     let cuts = self.split(c, hits, x, y);
                     let mut v = 0.0;
                     for o in 0..OUTCOMES {
@@ -302,7 +367,10 @@ impl<'a> Tree<'a> {
                 }
                 best.1
             } else {
-                cells[0]
+                // The likeliest cell, the lowest on ties: `ranked`'s first.
+                Bits(s.or).fold(s.or.trailing_zeros() as usize, |best, c| {
+                    if occ[c] > occ[best] { c } else { best }
+                })
             }
         };
         let cuts = self.split(cell, hits, x, y);
@@ -565,7 +633,7 @@ mod tests {
     }
 
     fn solved(k: &Knowledge) -> (f64, usize) {
-        let w = worlds(k, 64, None).unwrap();
+        let w = worlds(k, &Posterior::compute(k), 64, None).unwrap();
         let idx: Vec<u32> = (0..w.len() as u32).collect();
         Tree::new(&w, cfg(64, 0)).solve(&idx, k.hits.0, 64).unwrap()
     }
@@ -584,7 +652,7 @@ mod tests {
         let k = eight_worlds();
         assert_eq!(Posterior::compute(&k).layouts, 8);
         assert_eq!(solved(&k), (37.0, 73));
-        let w = worlds(&k, 64, None).unwrap();
+        let w = worlds(&k, &Posterior::compute(&k), 64, None).unwrap();
         assert_eq!(brute(&w, k.hits.0), 37.0);
         assert_eq!(Broadside::new().choose(&k, &mut Rng::new(7)), 73);
     }
@@ -595,7 +663,7 @@ mod tests {
         assert_eq!(Posterior::compute(&k).layouts, 9);
         assert_eq!(solved(&k), (36.0, 92));
         // Rollouts alone settle for I10, at 37 shots over the nine layouts.
-        let w = worlds(&k, 64, None).unwrap();
+        let w = worlds(&k, &Posterior::compute(&k), 64, None).unwrap();
         assert_eq!(Tree::new(&w, cfg(0, 0)).choose(k.hits.0), 89);
         assert_eq!(Broadside::new().choose(&k, &mut Rng::new(7)), 92);
     }
@@ -612,7 +680,7 @@ mod tests {
         for h2 in [4f64.ln(), 0.0] {
             theta[71] = h2;
             let tilt = Tilt::from_theta(theta);
-            let w = worlds(&k, 64, Some(&tilt)).unwrap();
+            let w = worlds(&k, &Posterior::compute(&k), 64, Some(&tilt)).unwrap();
             let (j2, i1) = (w[0].weight, w[1].weight);
             assert!(w[0].all >> 91 & 1 == 1 && (i1 / j2 - 2.0).abs() < 1e-12);
             let mut engine = Broadside::new();
@@ -642,7 +710,7 @@ mod tests {
                 };
                 k.record(c, board.fire(c));
             }
-            if !k.won() && worlds(&k, limit, None).is_some() {
+            if !k.won() && worlds(&k, &Posterior::compute(&k), limit, None).is_some() {
                 out.push(k);
             }
         }
@@ -653,7 +721,7 @@ mod tests {
     fn solver_matches_plain_search() {
         let mut checked = 0;
         for k in late_states(11, 200, 6) {
-            let w = worlds(&k, 6, None).unwrap();
+            let w = worlds(&k, &Posterior::compute(&k), 6, None).unwrap();
             if w.len() < 3 {
                 continue;
             }
@@ -666,8 +734,8 @@ mod tests {
     #[test]
     fn tree_values_match_rollouts_on_real_posteriors() {
         for k in late_states(12, 12, 60) {
-            let w = worlds(&k, 60, None).unwrap();
-            let lists = Posterior::enumerate_afloat(&k, 60).unwrap();
+            let w = worlds(&k, &Posterior::compute(&k), 60, None).unwrap();
+            let lists = Posterior::compute(&k).enumerate_afloat(&k, 60).unwrap();
             let n = w.len();
             let idx: Vec<u32> = (0..n as u32).collect();
             let (mut y, mut z) = (vec![0u32; n], vec![0u32; n]);
@@ -694,7 +762,7 @@ mod tests {
     #[test]
     fn stronger_continuations_never_cost_shots() {
         for k in late_states(13, 40, 300) {
-            let w = worlds(&k, 300, None).unwrap();
+            let w = worlds(&k, &Posterior::compute(&k), 300, None).unwrap();
             let n = w.len();
             let value = |solve, deep| {
                 let mut x: Vec<u32> = (0..n as u32).collect();

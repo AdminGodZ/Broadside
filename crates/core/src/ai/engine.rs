@@ -15,7 +15,7 @@ use super::search::{self, Tree};
 use crate::bitboard::{Bits, CELLS};
 use crate::fleet::{LENGTHS, SEGMENTS, SHIPS, Ship, THROUGH};
 use crate::game::{Knowledge, Outcome};
-use crate::posterior::{ENUM_WORK, Posterior};
+use crate::posterior::Posterior;
 use crate::rng::Rng;
 use std::sync::Arc;
 
@@ -419,11 +419,7 @@ impl Shooter for Broadside {
         }
         let prior = self.prior.as_deref();
         let s = &self.search;
-        // Each placement stands for at least one layout, so more layouts than
-        // the enumeration may walk through cannot fit the limit.
-        if p.layouts <= (s.exact_limit as u64).saturating_mul(ENUM_WORK as u64)
-            && let Some(worlds) = search::worlds(k, s.exact_limit, prior)
-        {
+        if let Some(worlds) = search::worlds(k, &p, s.exact_limit, prior) {
             return Tree::new(&worlds, *s).choose(k.hits.0);
         }
         let scores = cell_scores(&p, prior, k);

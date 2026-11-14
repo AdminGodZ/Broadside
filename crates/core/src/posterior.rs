@@ -156,9 +156,11 @@ impl Posterior {
 
     /// Every joint placement of the afloat ships with its layout count (how
     /// many arrangements of the sunk ships go with it), ordered by slots.
-    /// `None` if there are more than `limit` of them, or if they stand for
-    /// more than `ENUM_WORK * limit` layouts. Index by ship.
+    /// `self` must be the posterior of `k`. `None` if there are more than
+    /// `limit` placements, or if walking them would take more than
+    /// `ENUM_WORK * limit` layouts. Index by ship.
     pub fn enumerate_afloat(
+        &self,
         k: &Knowledge,
         limit: usize,
     ) -> Option<Vec<([Option<u8>; SHIPS], u64)>> {
@@ -176,8 +178,11 @@ impl Posterior {
             })
             .collect();
         // Each placement stands for at most one layout per arrangement of
-        // the sunk ships, so with few arrangements we can stop early.
+        // the sunk ships: more layouts than that cannot fit the limit.
         let arrangements = sunk.iter().map(|(_, c)| c.len()).product::<usize>();
+        if self.layouts > (limit as u64).saturating_mul(arrangements.max(1) as u64) {
+            return None;
+        }
         let mut e = Enumerator {
             misses: k.misses.0,
             hits: k.hits.0,
@@ -424,7 +429,7 @@ impl Solver {
 }
 
 /// Layouts `enumerate_afloat` may walk through per placement it may return.
-pub const ENUM_WORK: usize = 16;
+const ENUM_WORK: usize = 16;
 
 #[inline]
 fn slot_key(ship: usize, slot: usize) -> u64 {
@@ -895,7 +900,7 @@ mod tests {
                 continue;
             }
             let p = Posterior::compute(&k);
-            if let Some(f) = Posterior::enumerate_afloat(&k, 5000) {
+            if let Some(f) = p.enumerate_afloat(&k, 5000) {
                 assert_eq!(f.iter().map(|x| x.1).sum::<u64>(), p.layouts);
                 checked += 1;
             }
@@ -909,15 +914,15 @@ mod tests {
         while checked < 30 {
             let shots = 45 + rng.below(35) as usize;
             let k = random_state(&mut rng, shots);
-            let Some(f) = Posterior::enumerate_afloat(&k, 3000) else {
+            let p = Posterior::compute(&k);
+            let Some(f) = p.enumerate_afloat(&k, 3000) else {
                 continue;
             };
             if k.won() {
                 continue;
             }
             // One below the support is refused.
-            assert!(Posterior::enumerate_afloat(&k, f.len() - 1).is_none());
-            let p = Posterior::compute(&k);
+            assert!(p.enumerate_afloat(&k, f.len() - 1).is_none());
             let mut ships = [[0u64; SLOTS]; SHIPS];
             for (t, w) in &f {
                 let fixed: Vec<(usize, u8)> = (0..SHIPS)

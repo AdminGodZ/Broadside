@@ -15,16 +15,19 @@ crates/
 ```sh
 broadside play [--heat]          # you vs the engine; --heat shows its read of your fleet
 broadside assist                 # engine advises shots vs any opponent; you report results
-broadside sim --shooter S --placer P --games N     # shots-to-win statistics
-broadside duel A B [--placer-a P] [--placer-b P]   # head-to-head win rate
+broadside sim --shooter S --placer P --games N     # shots-to-win statistics (--dump FILE: every game as CSV)
+broadside compare A B [--placer P]                 # two shooters on the same layouts, game by game
+broadside duel A B [--placer-a P] [--placer-b P]   # head-to-head win rate (--match N: both sides learn)
 broadside analyze --shooter S    # where the misses happen (hunt vs target, by ships afloat)
 broadside matrix --alphas 0,1,2  # placement game: tilted placers vs shooters expecting them
-broadside bench                  # time the exact posterior on the empty board
+broadside bench                  # time the exact posterior and the engine's moves
 broadside count                  # brute-force count of all 30,093,975,536 layouts
 ```
 
 Run with `cargo run --release -p broadside -- <command>`. Shooters: `broadside`, `greedy`,
-`density`, `density@tiltA`, `parity`, `hunt-target`, `random`. Placers: `uniform`, `spaced`, `tiltA`.
+`density`, `NAME@tiltA`, `parity`, `hunt-target`, `random`, and `broadside:KEY=N,...` to set
+search limits (see `Search` in `crates/core/src/ai/engine.rs`). Placers: `broadside`,
+`equilibrium`, `uniform`, `spaced`, `tiltA`, `mix:A=P,...`.
 
 Tests: `cargo test`, slow ones with `cargo test --release -- --ignored`.
 
@@ -36,18 +39,30 @@ Tests: `cargo test`, slow ones with `cargo test --release -- --ignored`.
   hit are counted in closed form (the last two via popcounts: all pairs minus overlapping
   pairs). The empty board, all 30 billion layouts with exact cell marginals, takes ~45 ms on
   one core. Early positions are cached up to board symmetry.
-- **Shooting.** Fire at the most likely cell, except in the endgame, where rollout search
-  plays the greedy policy to the end against every possible (or a sample of) placement of the
-  afloat ships for each candidate shot, and deviates from greedy only for a real gain.
+- **Shooting.** Fire at the most likely cell until the afloat ships have few enough joint
+  placements to list (30,000 by default, which covers every position with two ships left).
+  From there the engine searches. Each listed placement is a possible world, and a later
+  position is just the subset of worlds that agree with the shots since, so whole lines of
+  play are evaluated by splitting lists, with no further inference. The likeliest shots are
+  compared by playing each to the end over every world; positions with few worlds left are
+  solved for the optimal shot.
+- **A certain hit is not always right.** A cell can be sure to hold a ship while it is unclear
+  which ship. Hitting it changes which later shot announces which sinking, and that can cost
+  information. The engine takes a certain hit without thinking only when the same ship holds
+  the cell in every layout; otherwise the search decides.
 - **Placement.** Tilted layouts: placements weighted per cell so ship occupancy hits a target
   between uniform and inverted centre bias. Shooters that assume uniform placement hunt the
   centre first and pay for it. A single game uses an equilibrium mix of tilts, computed from
-  the placement-game matrix, so even a shooter that expects it cannot exploit it.
+  the placement-game matrix, so even a shooter that expects it cannot exploit it. (That is an
+  equilibrium of the measured matrix of tilts against shooters expecting a tilt, not of
+  Battleship as a whole.)
 - **Learning across a match.** The shooter learns the opponent's placement habits by model
   selection (uniform, tilt family, shrunk per-cell occupancy, each scored on predicting the next
   revealed fleet), so it gains against biased placers and loses nothing against uniform ones.
-  The placer tracks where the opponent looks last and a bandit decides how hard to exploit it,
-  drifting back to the equilibrium against opponents that adapt.
+  Under a learned prior the search weighs worlds exactly; before the search starts the prior
+  enters approximately. The placer tracks where the opponent looks last and a bandit decides
+  how hard to exploit it. It sees only the shots actually fired: a game ends when either fleet
+  is sunk.
 
 ## Rules (standard)
 
