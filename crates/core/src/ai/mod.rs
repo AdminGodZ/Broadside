@@ -16,6 +16,9 @@ pub trait Shooter: Send {
     fn choose(&mut self, k: &Knowledge, rng: &mut Rng) -> usize;
     /// The opponent's layout, revealed after a game.
     fn learn(&mut self, _layout: &Layout) {}
+    /// Threads a single decision may use (1 unless told otherwise:
+    /// simulations run one game per thread instead).
+    fn set_threads(&mut self, _threads: usize) {}
 }
 
 /// Chooses a fleet layout.

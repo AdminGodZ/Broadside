@@ -412,6 +412,10 @@ impl Shooter for Broadside {
         }
     }
 
+    fn set_threads(&mut self, threads: usize) {
+        self.threads = threads.max(1);
+    }
+
     fn name(&self) -> String {
         if self.search.exact_limit == 0 && self.search.max_afloat == 0 {
             "greedy".into()
@@ -434,7 +438,7 @@ impl Shooter for Broadside {
         let prior = self.prior.as_deref();
         let s = &self.search;
         if let Some(worlds) = search::worlds(k, &p, s.exact_limit, prior) {
-            return Tree::new(&worlds, *s).choose(k.hits.0);
+            return Tree::new(&worlds, *s).choose(k.hits.0, self.threads);
         }
         let scores = cell_scores(&p, prior, k);
         // Greedy takes a certain hit before anything else.

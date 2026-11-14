@@ -153,6 +153,7 @@ pub fn play(
 ) -> Result<(), String> {
     let mut rng = Rng::new(seed);
     let mut engine: Box<dyn Shooter> = ai::shooter(shooter_name).ok_or("unknown shooter")?;
+    engine.set_threads(std::thread::available_parallelism().map_or(1, |n| n.get()));
     let engine_layout = ai::placer(placer_name)
         .ok_or("unknown placer")?
         .place(&mut rng);
@@ -249,6 +250,7 @@ pub fn assist(seed: u64, shooter_name: &str) -> Result<(), String> {
     // Suggestion for the current history, so a typo doesn't re-roll ties.
     let mut last: Option<(History, usize)> = None;
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    engine.set_threads(threads);
     println!("Report each shot's result: m (miss), h (hit), or the sunk ship: c b r s d");
     println!(
         "(carrier, battleship, cruiser, submarine, destroyer). Fire elsewhere with `E5 m`; `u` undoes; `q` quits."

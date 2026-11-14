@@ -25,6 +25,8 @@ use crate::posterior::Posterior;
 use crate::rng::Rng;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 /// One joint placement of the ships still afloat.
 #[derive(Clone, Copy, Debug)]
@@ -181,6 +183,8 @@ pub struct Tree<'a> {
 const SOLVE_ATTEMPTS: u64 = 16;
 /// Smaller positions are quicker to evaluate than to look up.
 const TABLE_MIN: usize = 4;
+/// Positions kept per table (about 50 bytes each).
+const TABLE_MAX: usize = 2_000_000;
 
 impl<'a> Tree<'a> {
     pub fn new(worlds: &'a [World], cfg: Search) -> Self {
@@ -261,9 +265,10 @@ impl<'a> Tree<'a> {
     }
 
     /// The shot to fire with `hits` standing, given every world: the cell.
-    pub fn choose(&mut self, hits: u128) -> usize {
-        let n = self.worlds.len();
-        let root: Vec<u32> = (0..n as u32).collect();
+    /// With `threads` above 1 the candidate shots are judged in parallel;
+    /// the choice is the same.
+    pub fn choose(&mut self, hits: u128, threads: usize) -> usize {
+        let root: Vec<u32> = (0..self.worlds.len() as u32).collect();
         let s = Summary::of(self.worlds.iter(), hits);
         if s.settled().is_some() || s.forced != 0 {
             return (if s.forced != 0 { s.forced } else { s.or }).trailing_zeros() as usize;
@@ -271,28 +276,64 @@ impl<'a> Tree<'a> {
         if let Some((_, cell)) = self.solve(&root, hits, self.cfg.solve_worlds) {
             return cell;
         }
-        let (mut y, mut z, mut t) = (vec![0u32; n], vec![0u32; n], vec![0u32; n]);
         let occ = occupancy(self.worlds.iter(), hits);
-        let mut best = (f64::INFINITY, 0);
-        for x in ranked(&occ, s.or)
-            .into_iter()
-            .take(self.cfg.candidates.max(1))
-        {
-            let cuts = self.split(x, hits, &root, &mut y);
-            let mut v = 0.0;
-            for o in 0..OUTCOMES {
-                let r = cuts[o]..cuts[o + 1];
-                if !r.is_empty() {
-                    let h = advance(o, x, hits);
-                    v += self.value(&mut y[r.clone()], &mut z[r.clone()], &mut t[r], h, true);
+        let mut cands = ranked(&occ, s.or);
+        cands.truncate(self.cfg.candidates.max(1));
+        let values: Vec<f64> = if threads <= 1 || cands.len() == 1 {
+            cands.iter().map(|&x| self.after(x, hits, &root)).collect()
+        } else {
+            // A tree of its own per thread: the tables are not shared, but
+            // a position's value does not depend on them.
+            let (worlds, cfg, next) = (self.worlds, self.cfg, AtomicUsize::new(0));
+            let mut values = vec![0.0; cands.len()];
+            thread::scope(|scope| {
+                let workers: Vec<_> = (0..threads.min(cands.len()))
+                    .map(|_| {
+                        scope.spawn(|| {
+                            let mut tree = Tree::new(worlds, cfg);
+                            let mut done = Vec::new();
+                            loop {
+                                let i = next.fetch_add(1, Ordering::Relaxed);
+                                let Some(&x) = cands.get(i) else {
+                                    return done;
+                                };
+                                done.push((i, tree.after(x, hits, &root)));
+                            }
+                        })
+                    })
+                    .collect();
+                for w in workers {
+                    for (i, v) in w.join().unwrap() {
+                        values[i] = v;
+                    }
                 }
-            }
+            });
+            values
+        };
+        let mut best = (f64::INFINITY, 0);
+        for (&x, v) in cands.iter().zip(values) {
             // Leave the likeliest cell only for a real gain.
             if v < best.0 - 1e-9 * s.weight {
                 best = (v, x);
             }
         }
         best.1
+    }
+
+    /// Total shots to finish after firing at `x`, less the shot itself.
+    fn after(&mut self, x: usize, hits: u128, root: &[u32]) -> f64 {
+        let n = root.len();
+        let (mut y, mut z, mut t) = (vec![0u32; n], vec![0u32; n], vec![0u32; n]);
+        let cuts = self.split(x, hits, root, &mut y);
+        let mut v = 0.0;
+        for o in 0..OUTCOMES {
+            let r = cuts[o]..cuts[o + 1];
+            if !r.is_empty() {
+                let h = advance(o, x, hits);
+                v += self.value(&mut y[r.clone()], &mut z[r.clone()], &mut t[r], h, true);
+            }
+        }
+        v
     }
 
     /// Total shots to finish from the worlds in `x`, by the strongest policy
@@ -321,7 +362,7 @@ impl<'a> Tree<'a> {
             Some((v, _)) => v,
             None => self.play_on(x, y, z, hits, improve, &s),
         };
-        if x.len() >= TABLE_MIN {
+        if x.len() >= TABLE_MIN && self.values[improve as usize].len() < TABLE_MAX {
             self.values[improve as usize].insert(key, v);
         }
         v
@@ -664,7 +705,8 @@ mod tests {
         assert_eq!(solved(&k), (36.0, 92));
         // Rollouts alone settle for I10, at 37 shots over the nine layouts.
         let w = worlds(&k, &Posterior::compute(&k), 64, None).unwrap();
-        assert_eq!(Tree::new(&w, cfg(0, 0)).choose(k.hits.0), 89);
+        assert_eq!(Tree::new(&w, cfg(0, 0)).choose(k.hits.0, 1), 89);
+        assert_eq!(Tree::new(&w, cfg(0, 0)).choose(k.hits.0, 4), 89);
         assert_eq!(Broadside::new().choose(&k, &mut Rng::new(7)), 92);
     }
 
