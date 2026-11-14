@@ -444,6 +444,9 @@ impl Shooter for Broadside {
             // Stable sort: ties keep the lowest cell first, like `best_det`.
             cands.sort_by(|&a, &b| scores[b].total_cmp(&scores[a]));
             cands.truncate(s.candidates.max(1));
+            if cands.len() == 1 {
+                return cands[0];
+            }
             // Its own random stream: how many samples it draws must not
             // shift the tie-breaks of later moves.
             return self.sampled_search(k, &p, &cands, &mut Rng::new(rng.next_u64()));
