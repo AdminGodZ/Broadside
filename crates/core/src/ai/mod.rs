@@ -127,10 +127,11 @@ pub struct ContraryPlacer {
     engine: habits::Habits,
 }
 
-impl Default for ContraryPlacer {
-    fn default() -> Self {
+impl ContraryPlacer {
+    /// Against an engine whose starting belief counts for `games` fleets.
+    pub fn new(games: f64) -> Self {
         Self {
-            engine: habits::Habits::neutral(),
+            engine: habits::Habits::starting(habits::neutral(), games),
         }
     }
 }
@@ -178,7 +179,7 @@ pub const PLACERS: &[&str] = &[
     "spaced",
     "clumped",
     "swapN (spaced and clumped in turn, N games each)",
-    "contrary (the kind of fleet the engine expects least)",
+    "contrary (the kind of fleet the engine expects least; contraryN against weight=N)",
     "tiltA (e.g. tilt1.5)",
     "mix:A=P,A=P,...",
 ];
@@ -269,7 +270,12 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
         "uniform" => Box::new(UniformPlacer),
         "spaced" => Box::new(SpacedPlacer),
         "clumped" => Box::new(ClumpedPlacer),
-        "contrary" => Box::new(ContraryPlacer::default()),
+        "contrary" => Box::new(ContraryPlacer::new(habits::Habits::GAMES)),
+        // contraryN: against an engine set to weight=N.
+        n if n.starts_with("contrary") => {
+            let tenths: u32 = n[8..].parse().ok().filter(|&n| n > 0)?;
+            Box::new(ContraryPlacer::new(tenths as f64 / 10.0))
+        }
         n if n.starts_with("swap") => Box::new(SwapPlacer {
             every: n[4..].parse().ok().filter(|&n| n > 0)?,
             placed: 0,
