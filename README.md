@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="Broadside" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <img src="assets/banner-light.svg" alt="Broadside, an exact Battleship engine" width="100%">
+  </picture>
 </p>
 
 <p align="center">
@@ -249,7 +252,7 @@ crates/
   cli/    broadside: the command-line front end
   wasm/   broadside-wasm: the engine for the browser, a plain C ABI over WebAssembly
 web/      the browser game (page.html + build.sh → dist/broadside.html)
-assets/   logo, banner and charts (make_logo.py, make_charts.py draw them)
+assets/   logo and banner, light and dark, and charts (make_logo.py, make_charts.py draw them)
 ```
 
 Boards are `u128` bitboards, bit `row * 10 + col`. Release builds use fat LTO and `target-cpu=native`.
@@ -279,4 +282,9 @@ The core has no dependencies.
 | Fleet layouts with no ships touching, not even at corners | 3,851,502,784 |
 | Minimum possible shots | 17 |
 
-<p align="center"><img src="assets/logo.svg" alt="" width="72"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo-light.svg" alt="" width="72">
+  </picture>
+</p>
