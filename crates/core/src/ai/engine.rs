@@ -11,10 +11,11 @@
 
 use super::Shooter;
 use super::habits::{self, Habits, KINDS, Mix};
+use super::last;
 use super::placement::Tilt;
 use super::search::{self, Tree};
 use crate::bitboard::{Bits, CELLS};
-use crate::fleet::{LENGTHS, SEGMENTS, SHIPS, Ship, THROUGH};
+use crate::fleet::{FLEET_CELLS, LENGTHS, SEGMENTS, SHIPS, Ship, THROUGH};
 use crate::game::{Knowledge, Layout, Outcome};
 use crate::posterior::Posterior;
 use crate::rng::Rng;
@@ -40,6 +41,10 @@ pub struct Search {
     pub max_afloat: usize,
     /// Placements sampled per decision.
     pub samples: usize,
+    /// The last ship, while none of its cells is hit: the best order to look
+    /// for it is searched exactly, opening at most this many positions
+    /// (0 = never; see `last`).
+    pub last_nodes: u64,
     /// Against an opponent: rollouts of its play that estimate how many
     /// shots it still needs; the search then plays for the win, not for the
     /// fewest shots (0 = ignore the race).
@@ -182,6 +187,7 @@ impl Broadside {
                 deep_worlds: 0,
                 max_afloat: 0,
                 samples: 4000,
+                last_nodes: 2_000,
                 race: 0,
                 spread: 15,
             },
@@ -227,6 +233,7 @@ impl Broadside {
             search: Search {
                 exact_limit: 0,
                 max_afloat: 0,
+                last_nodes: 0,
                 ..Self::new().search
             },
             ..Self::new()
@@ -498,6 +505,19 @@ impl Shooter for Broadside {
         }
         let prior = self.prior.as_deref();
         let s = self.search;
+        // One ship left and no hit on it: every placement in the unshot
+        // cells is as likely as any other, and the best order to try them
+        // can be found outright.
+        let afloat = k.afloat_mask();
+        let plain = mix.is_none() && prior.is_none() && (self.race.is_none() || s.race == 0);
+        if s.last_nodes > 0 && plain && afloat.count_ones() == 1 {
+            let len = LENGTHS[afloat.trailing_zeros() as usize];
+            if k.hits.count() as usize + len == FLEET_CELLS as usize
+                && let Some(order) = last::best(k.unknown(), len, s.last_nodes)
+            {
+                return order.shot;
+            }
+        }
         let worlds = match &mix {
             Some(m) => m.worlds(k, s.exact_limit, prior),
             None => search::worlds(k, &p, s.exact_limit, prior),

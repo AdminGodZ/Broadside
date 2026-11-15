@@ -3,6 +3,7 @@
 pub mod baseline;
 pub mod engine;
 pub mod habits;
+pub mod last;
 pub mod placement;
 pub mod search;
 mod tilts;
@@ -164,7 +165,7 @@ impl Placer for ContraryPlacer {
 
 pub const SHOOTERS: &[&str] = &[
     "broadside",
-    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples, race, spread; apart, corners, weight)",
+    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples, last, race, spread; apart, corners, weight)",
     "greedy",
     "density",
     "NAME@tiltA (expects tiltA placement)",
@@ -216,6 +217,7 @@ fn engine(name: &str) -> Option<engine::Broadside> {
             "deep" => s.deep_worlds = v,
             "afloat" => s.max_afloat = v,
             "samples" => s.samples = v,
+            "last" => s.last_nodes = v as u64,
             "race" => s.race = v,
             "spread" => s.spread = v,
             _ => return None,
