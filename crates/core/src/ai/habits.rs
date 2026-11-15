@@ -76,7 +76,7 @@ const RECOVERY: f64 = 0.05;
 
 impl Habits {
     /// Fleets seen before an opponent's habits are trusted over the rules.
-    pub const GAMES: f64 = 2.0;
+    pub const GAMES: f64 = 6.0;
 
     pub fn neutral() -> Self {
         Self::starting(neutral(), Self::GAMES)
@@ -507,9 +507,16 @@ mod tests {
         for _ in 0..3 {
             engine.learn(&SpacedPlacer.place(&mut rng));
         }
+        // A few fleets move the belief with care, more of them firmly.
+        let spaced = engine.spacing().unwrap();
+        assert!(spaced[0] > 0.3 && spaced[0] < 0.6, "{spaced:?}");
+        for _ in 0..7 {
+            engine.learn(&SpacedPlacer.place(&mut rng));
+        }
         let spaced = engine.spacing().unwrap();
         assert!(spaced[0] > 0.6, "{spaced:?}");
         // The opposite habit is learned just the same.
+        let mut engine = Broadside::new();
         for _ in 0..30 {
             engine.learn(&ClumpedPlacer.place(&mut rng));
         }

@@ -90,6 +90,16 @@ biased placers and loses nothing against uniform ones. The placer tracks where t
 last, and a bandit decides how hard to exploit it. Both learn only from what a real game shows: the
 fleet revealed at the end, and the shots actually fired before the game ended.
 </td></tr>
+<tr><td><b>How the opponent spaces ships</b></td><td>
+Many players never let ships touch; some stack them on purpose. Every layout is one of three kinds:
+all ships apart, some meeting at a corner only, some lying side by side. The engine counts each kind
+exactly and holds a belief over the three. It starts where random placement puts them (13%, 6%,
+81%), so it assumes nothing about a new opponent. Hits and misses within a game correct the belief
+by exact Bayes, and revealed fleets move it from game to game. Because an opponent may notice and
+place against it, the learned belief is only trusted as far as it has predicted better than assuming
+nothing: an opponent that always shows the kind of fleet the engine expects least gains nothing
+measurable.
+</td></tr>
 </table>
 
 ## How strong is it
@@ -110,6 +120,28 @@ The default was measured against the 30,000 setting on the same 20,000 layouts: 
 better. Times are per game on a 24-core machine running one game per core. Single games swing by
 about ±8.6 shots (one standard deviation), so one game between two good players is mostly luck;
 a match is not.
+
+### Opponents with a spacing habit
+
+Shots saved per game by learning how the opponent spaces ships, against the same engine without it.
+Matches of 20 games, 6,000 games per row, search up to 30,000 placements:
+
+| The opponent's fleets | Shots saved per game |
+|---|---:|
+| ships never touch (`spaced`) | 4.33 ± 0.10 |
+| spaced and stacked in turn, 5 games each (`swap5`) | 1.42 ± 0.12 |
+| random placement (`uniform`) | 0.00 ± 0.08 |
+| always the kind the engine expects least (`contrary`) | −0.03 ± 0.06 |
+| the engine's own placement mix (`equilibrium`) | −0.10 ± 0.09 |
+
+With the default search (3,000 games per row) the last rows read +0.18 ± 0.12 against random
+placement and −0.13 ± 0.09 against the contrary placer: no cost that the runs can tell from zero.
+A fixed assumption, by contrast, can be exploited. An engine told that ships lie apart nine times in
+ten saves 5.7 shots a game against spaced fleets, and loses 1.0 against random placement and 2.0
+against stacked fleets. That is why the belief starts neutral and is learned.
+
+<sub>`broadside compare "broadside:exact=30000,weight=10000000" "broadside:exact=30000" --placer P
+--match 20 --games 6000 --seed 44`; `weight=10000000` is an engine that never moves its belief.</sub>
 
 ### Head to head against a human-style player
 
@@ -187,6 +219,8 @@ broadside play [--heat]          # you vs the engine; --heat shows its read of y
 broadside assist                 # engine advises shots vs any opponent; you report results
 broadside sim --shooter S --placer P --games N     # shots-to-win statistics (--dump FILE: every game as CSV)
 broadside compare A B [--placer P]                 # two shooters on the same layouts, game by game
+                                                   #   (sim and compare take --match N: the players
+                                                   #   keep what they learned for N games)
 broadside duel A B [--placer-a P] [--placer-b P]   # head-to-head win rate (--match N: both sides learn;
                                                    #   --dump FILE: shots-to-win histograms as CSV)
 broadside analyze --shooter S    # where the misses happen (hunt vs target, by ships afloat)
@@ -199,8 +233,12 @@ Run with `cargo run --release -p broadside -- <command>`.
 
 - **Shooters:** `broadside`, `greedy`, `density`, `NAME@tiltA`, `parity`, `hunt-target`, `random`, and
   `broadside:KEY=N,...` to tune the search (`exact`, `cands`, `solve`, `nodes`, `deep`, `afloat`,
-  `samples`, `race`, `spread`; see `Search` in `crates/core/src/ai/engine.rs`).
-- **Placers:** `broadside`, `equilibrium`, `uniform`, `spaced`, `tiltA`, `mix:A=P,...`.
+  `samples`, `race`, `spread`; see `Search` in `crates/core/src/ai/engine.rs`) or its starting belief
+  about the opponent's spacing (`apart`, `corners` in percent, `weight` in tenths of a game).
+- **Placers:** `broadside`, `equilibrium`, `uniform`, `tiltA`, `mix:A=P,...`, and for testing the
+  spacing belief `spaced` (no ships touch), `clumped` (every ship lies against another), `swapN`
+  (spaced and clumped in turn, N games each) and `contrary` (always the kind of fleet the engine
+  expects least).
 - **Tests:** `cargo test`, slow ones with `cargo test --release -- --ignored`.
 
 ## Project layout
@@ -222,6 +260,8 @@ The core has no dependencies.
 - [x] Rules engine, baseline AIs, exact probability density, simulator, playable CLI
 - [x] Endgame search, placement game, opponent modelling across a match
 - [x] WebAssembly build and a browser UI
+- [x] Opponents who keep ships apart, or stack them: exact counts per kind of layout, a learned
+      belief that an opponent cannot milk
 - [ ] An exact prior-weighted posterior before the search starts
 - [ ] A shooter that tracks a mixed placer within a game
 - [ ] Tests against outside engines and human players
@@ -235,6 +275,8 @@ The core has no dependencies.
 | Positions per ship (5/4/3/3/2) | 120 / 140 / 160 / 160 / 180 |
 | Fleet layouts, Cruiser ≠ Submarine | 30,093,975,536 |
 | Fleet layouts, the two 3-ships interchangeable | 15,046,987,768 |
+| Fleet layouts with no ships side by side | 5,797,542,752 |
+| Fleet layouts with no ships touching, not even at corners | 3,851,502,784 |
 | Minimum possible shots | 17 |
 
 <p align="center"><img src="assets/logo.svg" alt="" width="72"></p>
