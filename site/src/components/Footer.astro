@@ -1,0 +1,23 @@
+---
+import Tag from "@lucide/astro/icons/tag";
+import { RELEASES, REPO, VERSION } from "../lib/site";
+import GithubIcon from "./GithubIcon.astro";
+---
+
+<footer>
+  <p>Broadside {VERSION}, made by <a href="https://admingod.ch">AdminGod</a>.</p>
+  <nav aria-label="Footer">
+    <a href={REPO} class="with-icon"><GithubIcon />Source</a>
+    <a href={RELEASES} class="with-icon"><Tag class="icon" />Releases</a>
+  </nav>
+</footer>
+
+<style>
+  footer {
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px;
+    margin-top: var(--section-gap); padding: 24px 0 40px; border-top: 1px solid var(--rule);
+    color: var(--ink-soft); font-size: .95rem;
+  }
+  p { margin: 0; }
+  nav { display: flex; gap: 24px; }
+</style>

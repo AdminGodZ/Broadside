@@ -255,7 +255,7 @@ crates/
   cli/    broadside: the command-line front end
   wasm/   broadside-wasm: the engine for the browser, a plain C ABI over WebAssembly
 web/      the browser game (page.html + build.sh → dist/broadside.html)
-site/     the website: landing page + build.sh → dist/ (deployed by Vercel, see vercel.json)
+site/     the website (Astro): npm run dev / npm run build → dist/, deployed by Vercel (vercel.json)
 assets/   logo and banner, light and dark, and charts (make_logo.py, make_charts.py draw them)
 ```
 
@@ -272,7 +272,9 @@ The core has no dependencies.
    website's `releases/latest/download/...` links always point at the newest release.
 
 The website deploys from `main` on every push: Vercel runs `site/vercel-build.sh`, which installs Rust
-and runs `site/build.sh`.
+and builds the Astro site in `site/` (its `prebuild` step builds the browser game into `/play`). Work on
+it with `cd site && npm install && npm run dev`. The games replayed on the landing page come from
+`cargo run --release -p broadside-core --example record_games > site/src/data/games.json`.
 
 ## Roadmap
 

@@ -1,7 +1,7 @@
 //! Records whole games of the engine against random fleets, as JSON, for the
 //! replay on the website:
 //!
-//! `cargo run --release -p broadside-core --example record_games > site/games.json`
+//! `cargo run --release -p broadside-core --example record_games > site/src/data/games.json`
 //!
 //! Each game is a fresh engine (no learning between games) against a uniformly
 //! placed fleet. Only games close to the engine's mean (39 to 47 shots) are

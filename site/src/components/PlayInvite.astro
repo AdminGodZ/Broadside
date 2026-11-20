@@ -1,0 +1,20 @@
+---
+import HardDriveDownload from "@lucide/astro/icons/hard-drive-download";
+import Play from "@lucide/astro/icons/play";
+import { OFFLINE_GAME } from "../lib/site";
+---
+
+<section class="section invite">
+  <h2>Ready for a game?</h2>
+  <p>Place your fleet, win the coin toss, and fire. It runs entirely in your browser; nothing is sent anywhere.</p>
+  <div class="actions">
+    <a class="button primary" href="/play"><Play class="icon" />Start a game</a>
+    <a class="button" href={OFFLINE_GAME}><HardDriveDownload class="icon" />Save it for offline play</a>
+  </div>
+</section>
+
+<style>
+  .invite { text-align: center; }
+  p { color: var(--ink-soft); max-width: 44ch; margin: 0 auto 28px; }
+  .actions { justify-content: center; }
+</style>
