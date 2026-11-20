@@ -31,6 +31,9 @@
 
 ## Play it
 
+**Online:** play at [broadside.admingod.ch](https://broadside.admingod.ch), or download the command-line
+engine for macOS, Windows or Linux from the [latest release](https://github.com/AdminGodZ/Broadside/releases/latest).
+
 **In the browser.** The whole engine compiles to WebAssembly and runs inside one self-contained page,
 no server needed:
 
@@ -252,11 +255,24 @@ crates/
   cli/    broadside: the command-line front end
   wasm/   broadside-wasm: the engine for the browser, a plain C ABI over WebAssembly
 web/      the browser game (page.html + build.sh → dist/broadside.html)
+site/     the website: landing page + build.sh → dist/ (deployed by Vercel, see vercel.json)
 assets/   logo and banner, light and dark, and charts (make_logo.py, make_charts.py draw them)
 ```
 
 Boards are `u128` bitboards, bit `row * 10 + col`. Release builds use fat LTO and `target-cpu=native`.
 The core has no dependencies.
+
+## Releasing
+
+1. Set `version` in `Cargo.toml` (workspace) and merge to `main`.
+2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+3. `.github/workflows/release.yml` checks that the tag matches the version, runs the tests, builds the
+   CLI for five platforms (with portable CPU baselines instead of `target-cpu=native`) and the browser
+   game, and publishes a GitHub release with `SHA256SUMS.txt`. File names carry no version, so the
+   website's `releases/latest/download/...` links always point at the newest release.
+
+The website deploys from `main` on every push: Vercel runs `site/vercel-build.sh`, which installs Rust
+and runs `site/build.sh`.
 
 ## Roadmap
 
