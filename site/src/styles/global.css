@@ -69,6 +69,10 @@ code, pre { font-family: var(--mono); font-size: .82em; }
   stroke-width: 1.75;
 }
 .with-icon { display: inline-flex; align-items: center; gap: .45em; }
+/* Flex centring puts an icon on the middle of the text's box, but Newsreader sits
+   high in its box (ascent .74em, descent .26em): halfway between its x-height and
+   cap-height middles is .07em above the box's middle. Lift inline icons to match. */
+.with-icon > .icon, .button > .icon { translate: 0 -.07em; }
 
 /* Buttons */
 .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 18px; }
