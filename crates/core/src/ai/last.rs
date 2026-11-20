@@ -282,7 +282,7 @@ fn finish_cost(len: usize, runs: [usize; 4]) -> u32 {
         cells &= !hit;
         let mut best = u32::MAX;
         while cells != 0 {
-            let y = cells & cells.wrapping_neg();
+            let y = cells.isolate_lowest_one();
             cells ^= y;
             let mut with = 0u16;
             for (i, &s) in ships.iter().enumerate() {
