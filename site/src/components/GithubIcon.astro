@@ -1,0 +1,13 @@
+---
+// The GitHub mark (simple-icons). Lucide no longer ships brand logos.
+import { siGithub } from "simple-icons";
+
+interface Props {
+  class?: string;
+}
+const { class: className = "icon" } = Astro.props;
+---
+
+<svg class={className} viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+  <path d={siGithub.path} />
+</svg>

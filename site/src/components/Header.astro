@@ -1,0 +1,36 @@
+---
+import logoDark from "../../../assets/logo-dark.svg";
+import logoLight from "../../../assets/logo-light.svg";
+import { REPO } from "../lib/site";
+import GithubIcon from "./GithubIcon.astro";
+---
+
+<header>
+  <a class="brand" href="/">
+    <img class="logo-dark" src={logoDark.src} alt="" width="30" height="30" />
+    <img class="logo-light" src={logoLight.src} alt="" width="30" height="30" />
+    Broadside
+  </a>
+  <nav aria-label="Main">
+    <a href="/play">Play</a>
+    <a href="#download">Download</a>
+    <a href="#how">How it works</a>
+    <a href={REPO} class="with-icon"><GithubIcon />GitHub</a>
+  </nav>
+</header>
+
+<style>
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 32px;
+    padding: 20px 0; border-bottom: 1px solid var(--rule);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font: 400 1.35rem/1 var(--stencil); }
+  .logo-light { display: none; }
+  @media (prefers-color-scheme: light) {
+    .logo-dark { display: none; }
+    .logo-light { display: block; }
+  }
+  nav { display: flex; flex-wrap: wrap; gap: 4px 26px; }
+  nav a { text-decoration: none; color: var(--ink-soft); }
+  nav a:hover { color: var(--ink); text-decoration: underline; }
+</style>

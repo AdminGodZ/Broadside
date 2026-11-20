@@ -1,6 +1,7 @@
 #!/bin/sh
-# Vercel's build image has no Rust: install rustup on first use (the toolchain,
-# its components and the wasm target come from rust-toolchain.toml), then build.
+# Vercel's build image has Node but no Rust: install rustup on first use (the
+# toolchain, its components and the wasm target come from rust-toolchain.toml),
+# then build the site with Astro. The output is site/dist.
 set -e
 if ! command -v cargo >/dev/null 2>&1; then
   [ -x "$HOME/.cargo/bin/cargo" ] || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -10,4 +11,6 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 cd "$(dirname "$0")/.."
 rustup toolchain install
-exec site/build.sh
+cd site
+npm ci --no-audit --no-fund
+npm run build

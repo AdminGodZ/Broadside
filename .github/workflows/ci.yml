@@ -23,11 +23,20 @@ jobs:
       - run: cargo test --release
 
   site:
-    name: Website build
+    name: Website check and build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: site/.nvmrc
+          cache: npm
+          cache-dependency-path: site/package-lock.json
       - run: rustup toolchain install
-      - run: site/build.sh
-      - run: test -s site/dist/index.html && test -s site/dist/play/index.html
-      - run: "! grep -q __VERSION__ site/dist/index.html"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm run build
+      - run: test -s dist/index.html && test -s dist/play/index.html

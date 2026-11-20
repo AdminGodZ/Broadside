@@ -1,0 +1,165 @@
+---
+// The engine replaying real games it played (src/data/games.json, recorded by
+// `cargo run --release -p broadside-core --example record_games`).
+---
+
+<figure aria-label="The engine replaying one of its real games: shots, hits and sunk ships appear on a 10 by 10 board.">
+  <svg id="board" viewBox="-8 -8 110 110" role="presentation"></svg>
+  <figcaption>
+    <span>A real game by the engine, replayed.</span>
+    <span id="replay-status" class="status"></span>
+  </figcaption>
+</figure>
+
+<script>
+  import games from "../data/games.json";
+
+  type Game = { ships: number[][]; shots: number[] };
+
+  const SVG = "http://www.w3.org/2000/svg";
+  const SHIP_NAMES = ["Carrier", "Battleship", "Cruiser", "Submarine", "Destroyer"];
+  const SHOT_MS = 420; // time between shots
+  const HOLD_MS = 3200; // how long a finished game stays on the board
+
+  function el(name: string, attrs: Record<string, string | number>, parent?: Element): SVGElement {
+    const node = document.createElementNS(SVG, name);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+    parent?.appendChild(node);
+    return node;
+  }
+
+  // Cell index = row * 10 + col; rows are A-J, columns 1-10, as in the engine.
+  const cx = (cell: number) => (cell % 10) * 10 + 5;
+  const cy = (cell: number) => Math.floor(cell / 10) * 10 + 5;
+
+  function drawSea(svg: SVGSVGElement) {
+    el("rect", { class: "sea", x: 0, y: 0, width: 100, height: 100, rx: 1 }, svg);
+    for (let i = 1; i < 10; i++) {
+      el("line", { class: "grid", x1: i * 10, y1: 0, x2: i * 10, y2: 100 }, svg);
+      el("line", { class: "grid", x1: 0, y1: i * 10, x2: 100, y2: i * 10 }, svg);
+    }
+    for (let i = 0; i < 10; i++) {
+      el("text", { class: "coord", x: i * 10 + 5, y: -4 }, svg).textContent = String(i + 1);
+      el("text", { class: "coord", x: -4, y: i * 10 + 5 }, svg).textContent = "ABCDEFGHIJ"[i];
+    }
+    return { ships: el("g", { class: "ships" }, svg), shots: el("g", { class: "shots" }, svg) };
+  }
+
+  function drawShip(layer: Element, cells: number[]) {
+    const xs = cells.map((c) => c % 10);
+    const ys = cells.map((c) => Math.floor(c / 10));
+    const x = Math.min(...xs) * 10;
+    const y = Math.min(...ys) * 10;
+    const w = (Math.max(...xs) + 1) * 10 - x;
+    const h = (Math.max(...ys) + 1) * 10 - y;
+    el("rect", { class: "ship", x: x + 1.6, y: y + 1.6, width: w - 3.2, height: h - 3.2, rx: 3.4 }, layer);
+  }
+
+  function drawShot(layer: Element, cell: number, hit: boolean) {
+    const x = cx(cell);
+    const y = cy(cell);
+    if (!hit) {
+      el("circle", { class: "miss", cx: x, cy: y, r: 1.2 }, layer);
+      return;
+    }
+    const g = el("g", { class: "hit" }, layer);
+    el("line", { x1: x - 2.4, y1: y - 2.4, x2: x + 2.4, y2: y + 2.4 }, g);
+    el("line", { x1: x - 2.4, y1: y + 2.4, x2: x + 2.4, y2: y - 2.4 }, g);
+  }
+
+  /** Draws `game` up to shot `upto`; returns how many ships are sunk by then. */
+  function render(layers: { ships: Element; shots: Element }, game: Game, upto = game.shots.length) {
+    layers.ships.replaceChildren();
+    layers.shots.replaceChildren();
+    const fired = new Set(game.shots.slice(0, upto));
+    const occupied = new Set(game.ships.flat());
+    let sunk = 0;
+    for (const cells of game.ships) {
+      if (cells.every((c) => fired.has(c))) {
+        drawShip(layers.ships, cells);
+        sunk++;
+      }
+    }
+    for (const c of game.shots.slice(0, upto)) drawShot(layers.shots, c, occupied.has(c));
+    return sunk;
+  }
+
+  function statusText(game: Game, i: number, sunk: number) {
+    if (sunk === game.ships.length) return `Fleet sunk in ${i} shots`;
+    const cell = game.shots[i - 1];
+    const ship = game.ships.findIndex((cells) => cells.includes(cell));
+    const fired = new Set(game.shots.slice(0, i));
+    if (ship >= 0 && game.ships[ship].every((c) => fired.has(c))) return `Shot ${i}: ${SHIP_NAMES[ship]} sunk`;
+    if (sunk === 0) return `Shot ${i}`;
+    return `Shot ${i}, ${sunk} ${sunk === 1 ? "ship" : "ships"} sunk`;
+  }
+
+  const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+  async function start() {
+    const svg = document.querySelector<SVGSVGElement>("#board");
+    const status = document.querySelector<HTMLElement>("#replay-status");
+    if (!svg || !status) return;
+    const layers = drawSea(svg);
+    const all = games as Game[];
+
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      render(layers, all[0]);
+      status.textContent = `Fleet sunk in ${all[0].shots.length} shots`;
+      return;
+    }
+
+    // Only animate while the board is on screen and the tab is visible.
+    let onScreen = true;
+    new IntersectionObserver(([entry]) => (onScreen = entry.isIntersecting)).observe(svg);
+    const whileVisible = async () => {
+      while (!onScreen || document.hidden) await wait(400);
+    };
+
+    for (let g = 0; ; g = (g + 1) % all.length) {
+      const game = all[g];
+      layers.ships.classList.remove("fading");
+      layers.shots.classList.remove("fading");
+      render(layers, game, 0);
+      status.textContent = "Shot 0";
+      for (let i = 1; i <= game.shots.length; i++) {
+        await wait(SHOT_MS);
+        await whileVisible();
+        const sunk = render(layers, game, i);
+        const cell = game.shots[i - 1];
+        el("circle", { class: "latest", cx: cx(cell), cy: cy(cell), r: 4 }, layers.shots);
+        status.textContent = statusText(game, i, sunk);
+      }
+      await wait(HOLD_MS);
+      layers.ships.classList.add("fading");
+      layers.shots.classList.add("fading");
+      await wait(600);
+    }
+  }
+
+  start();
+</script>
+
+<style>
+  figure { margin: 0; width: 100%; max-width: 470px; justify-self: center; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  svg :global(.sea) { fill: var(--water); stroke: var(--ink); stroke-width: .5; }
+  svg :global(.grid) { stroke: var(--rule); stroke-width: .25; }
+  svg :global(.coord) { fill: var(--ink-soft); font: 3.3px var(--serif); text-anchor: middle; dominant-baseline: central; }
+  svg :global(.miss) { fill: var(--ink); }
+  svg :global(.hit) { stroke: var(--hit); stroke-width: 1.35; stroke-linecap: round; }
+  svg :global(.ship) { fill: color-mix(in oklab, var(--ink) 14%, transparent); stroke: var(--ink); stroke-width: .6; }
+  svg :global(.latest) { fill: none; stroke: var(--mark); stroke-width: .9; animation: fade 1s ease-out forwards; }
+  svg :global(.ships), svg :global(.shots) { transition: opacity .5s; }
+  svg :global(.fading) { opacity: 0; }
+  @keyframes fade { from { opacity: 1; } to { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    svg :global(.latest) { display: none; }
+    svg :global(.ships), svg :global(.shots) { transition: none; }
+  }
+  figcaption {
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 16px; margin-top: 12px;
+    font-size: .95rem; color: var(--ink-soft); font-style: italic;
+  }
+  .status { font-style: normal; font-variant-numeric: tabular-nums; color: var(--ink); }
+</style>

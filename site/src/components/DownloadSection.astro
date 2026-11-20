@@ -1,0 +1,110 @@
+---
+import ChevronRight from "@lucide/astro/icons/chevron-right";
+import Download from "@lucide/astro/icons/download";
+import Info from "@lucide/astro/icons/info";
+import Laptop from "@lucide/astro/icons/laptop";
+import Monitor from "@lucide/astro/icons/monitor";
+import Terminal from "@lucide/astro/icons/terminal";
+import { RELEASES, SYSTEMS, VERSION } from "../lib/site";
+
+const kinds = { laptop: Laptop, monitor: Monitor };
+---
+
+<section class="section download" id="download">
+  <div>
+    <h2>Download</h2>
+    <p class="lead">
+      The terminal version. Play against the engine, let it call your shots in a game against someone else, or run your
+      own experiments. One file, nothing to install.
+    </p>
+    <a class="button primary" id="download-main" href={`${RELEASES}/latest`} data-version={VERSION}>
+      <Download class="icon" /><span id="download-label">See all downloads</span>
+    </a>
+    <details class="systems">
+      <summary><ChevronRight class="icon" />Other systems</summary>
+      <ul>
+        {
+          SYSTEMS.map((s) => {
+            const Kind = kinds[s.kind];
+            return (
+              <li data-os={s.id}>
+                <a href={s.url} class="with-icon" data-button={s.button} data-name={s.name}>
+                  <Kind class="icon" />
+                  {s.name}
+                </a>
+              </li>
+            );
+          })
+        }
+      </ul>
+    </details>
+  </div>
+  <div class="run">
+    <h3 class="with-icon"><Terminal class="icon" />Then run it</h3>
+    <pre><code>./broadside play --heat
+./broadside assist</code></pre>
+    <p>
+      <code>play</code> is a game against the engine; <code>--heat</code> shows where it expects your ships.{" "}
+      <code>assist</code> tells you where to fire in a game against anyone else. On Windows, use{" "}
+      <code>broadside.exe</code>.
+    </p>
+    <p class="fine note">
+      <Info class="icon" />
+      <span>
+        On a Mac, the first launch is blocked because the app isn't signed with an Apple developer ID. Allow it in System
+        Settings under Privacy &amp; Security.
+      </span>
+    </p>
+  </div>
+</section>
+
+<script>
+  // Point the main button at the build for this computer when the browser says which it is.
+  // Browsers report Intel on every Mac, so Macs get the Apple Silicon build; Intel stays in the list.
+  const ua = navigator.userAgent;
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const platform = nav.userAgentData?.platform || navigator.platform || "";
+  let os: string | null = null;
+  if (/Win/i.test(platform) || /Windows/i.test(ua)) os = "windows";
+  else if (/Mac/i.test(platform) && !/iPhone|iPad/i.test(ua)) os = "mac-arm";
+  else if (/Linux/i.test(platform) && !/Android/i.test(ua)) os = /aarch64|arm/i.test(platform + ua) ? "linux-arm" : "linux";
+
+  const item = os ? document.querySelector<HTMLLIElement>(`.systems li[data-os="${os}"]`) : null;
+  const link = item?.querySelector<HTMLAnchorElement>("a");
+  const main = document.querySelector<HTMLAnchorElement>("#download-main");
+  const label = document.querySelector<HTMLElement>("#download-label");
+  if (item && link && main && label) {
+    main.href = link.href;
+    label.textContent = link.dataset.button ?? "Download";
+    const small = document.createElement("small");
+    small.textContent = `${link.dataset.name}, version ${main.dataset.version}`;
+    label.append(small);
+    item.remove();
+  }
+</script>
+
+<style>
+  .download { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px 72px; align-items: start; }
+  @media (max-width: 860px) { .download { grid-template-columns: minmax(0, 1fr); } }
+  .lead { max-width: 46ch; color: var(--ink-soft); margin-bottom: 28px; }
+
+  .systems { margin-top: 20px; }
+  summary {
+    cursor: pointer; color: var(--ink-soft); width: max-content; list-style: none;
+    display: flex; align-items: center; gap: 6px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary:hover { color: var(--ink); }
+  summary :global(.icon) { transition: transform .15s; }
+  .systems[open] summary :global(.icon) { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) { summary :global(.icon) { transition: none; } }
+  ul { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; }
+  li :global(.icon) { color: var(--ink-soft); }
+
+  .run { background: var(--water); border-radius: 6px; padding: 26px 28px 10px; }
+  pre { margin: 0 0 18px; padding: 0; overflow-x: auto; line-height: 1.7; font-size: 1.05rem; }
+  .run p { color: var(--ink-soft); font-size: 1rem; }
+  .run p code { color: var(--ink); }
+  .note { display: flex; gap: 9px; }
+  .note :global(.icon) { margin-top: .3em; }
+</style>

@@ -1,0 +1,29 @@
+{
+  "name": "broadside-site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.23.4"
+  },
+  "scripts": {
+    "predev": "sh scripts/prepare.sh",
+    "dev": "astro dev",
+    "prebuild": "sh scripts/prepare.sh",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "@fontsource-variable/newsreader": "^5.3.0",
+    "@fontsource/saira-stencil-one": "^5.3.0",
+    "@lucide/astro": "^1.77.0",
+    "astro": "^7.4.13",
+    "simple-icons": "^16.38.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@types/node": "^26.6.6",
+    "typescript": "^6.0.3"
+  }
+}

@@ -1,0 +1,84 @@
+/* Broadside website: navy ink on cool chart paper. One typeface (Newsreader)
+   for all text; the stencil face is kept for the name only, as in the game.
+   No capitals-only text anywhere. Component styles live in each component. */
+
+:root {
+  --paper: #eff1ec;      /* chart paper, cool rather than cream */
+  --water: #e3e8e4;      /* the board, tiles and code: a shade deeper */
+  --ink: #13294b;        /* navy */
+  --ink-soft: #51627a;
+  --rule: #c4ccd0;
+  --hit: #c8372d;        /* signal red, for hits only */
+  --mark: #e0a100;       /* the latest shot and keyboard focus */
+  --grain-opacity: .5;
+  --serif: "Newsreader Variable", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --stencil: "Saira Stencil One", "Arial Narrow", Impact, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --section-gap: clamp(72px, 11vw, 128px);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0e1b2c; --water: #132439; --ink: #e4e8e1; --ink-soft: #9aa9ba; --rule: #26394f;
+    --hit: #ef5f4c; --mark: #f2bd2c; --grain-opacity: .22; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0e1b2c; --water: #132439; --ink: #e4e8e1; --ink-soft: #9aa9ba; --rule: #26394f;
+  --hit: #ef5f4c; --mark: #f2bd2c; --grain-opacity: .22; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background-color: var(--paper);
+  color: var(--ink);
+  font: 400 1.125rem/1.6 var(--serif);
+  font-optical-sizing: auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  -webkit-font-smoothing: antialiased;
+}
+/* Paper grain: fine noise over the whole page, fixed so it doesn't scroll. */
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .07 0 0 0 0 .16 0 0 0 0 .29 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: .18em; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2.5px solid var(--mark); outline-offset: 3px; border-radius: 2px; }
+
+.wrap { max-width: 1120px; margin: 0 auto; }
+.section { padding-top: var(--section-gap); }
+
+h1, h2, h3 { font-weight: 500; margin: 0; }
+h2 { font-size: clamp(2rem, 4.4vw, 2.75rem); line-height: 1.1; letter-spacing: -.01em; margin-bottom: .5em; }
+h3 { font-size: 1.3rem; line-height: 1.3; margin-bottom: .35em; }
+p { margin: 0 0 1em; }
+.fine { font-size: .95rem; color: var(--ink-soft); }
+code, pre { font-family: var(--mono); font-size: .82em; }
+
+/* Icons: Lucide components and the GitHub mark, sized to the text around them. */
+.icon {
+  width: 1.1em; height: 1.1em; flex: none; vertical-align: -.18em;
+  stroke-width: 1.75;
+}
+.with-icon { display: inline-flex; align-items: center; gap: .45em; }
+
+/* Buttons */
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 18px; }
+.button {
+  display: inline-flex; align-items: center; gap: 10px; text-decoration: none;
+  font: 500 1.05rem/1 var(--serif); padding: 14px 22px; border-radius: 4px;
+  border: 1px solid var(--ink); color: var(--ink); background: transparent;
+  transition: background-color .15s, color .15s;
+}
+.button:hover { background: var(--water); }
+.button.primary { background: var(--ink); color: var(--paper); }
+.button.primary:hover { background: color-mix(in oklab, var(--ink) 86%, var(--paper)); }
+.button small { display: block; font-size: .8rem; margin-top: 5px; opacity: .78; }
