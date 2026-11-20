@@ -67,6 +67,16 @@ pub struct Broadside {
     /// What the opponent is believed to do about spacing its ships; learns
     /// from its fleets while `learner` is set.
     pub habits: Habits,
+    /// EXPERIMENT: weight of a ship's chance on a cell, by ship.
+    pub hunt: [f64; SHIPS],
+    /// EXPERIMENT: weights apply only while no hit is unexplained.
+    pub hunt_only: bool,
+    /// EXPERIMENT: hunting keeps to one colour of the lattice of the smallest ship afloat (1 = destroyer only, 2 = any smallest).
+    pub parity: u8,
+    /// EXPERIMENT: while hunting with the Destroyer afloat, cells of a smallest cover of its places score this much more (10 or more: only they are shot).
+    pub cover: f64,
+    /// EXPERIMENT: the cover bonus also counts while a hit is unexplained.
+    pub cover_target: bool,
 }
 
 /// Learns the opponent's placement habits by model selection.
@@ -195,6 +205,11 @@ impl Broadside {
             learner: Some(Learner::default()),
             race: None,
             habits: Habits::neutral(),
+            hunt: [1.0; SHIPS],
+            hunt_only: false,
+            parity: 0,
+            cover: 0.0,
+            cover_target: false,
         }
     }
 
@@ -534,12 +549,77 @@ impl Shooter for Broadside {
                 None => tree.choose(k.hits.0, self.threads),
             };
         }
-        let scores = match &mix {
+        let mut scores = match &mix {
             Some(m) => m.scores(prior, k),
             None => cell_scores(&p, prior, k),
         };
+        if mix.is_none() && prior.is_none() && self.hunt != [1.0; SHIPS] {
+            let sunk_len: u32 = (0..SHIPS)
+                .filter(|&s| k.sunk[s].is_some())
+                .map(|s| LENGTHS[s] as u32)
+                .sum();
+            let target = k.hits.count() > sunk_len;
+            if !(self.hunt_only && target) {
+                let by_ship = p.ship_cells();
+                scores = [0.0; CELLS];
+                for s in Bits(k.afloat_mask() as u128) {
+                    for c in 0..CELLS {
+                        scores[c] += self.hunt[s] * by_ship[s][c] as f64;
+                    }
+                }
+            }
+        }
         // Greedy takes a certain hit before anything else.
-        let pool = if certain != 0 { certain } else { unknown };
+        let mut pool = if certain != 0 { certain } else { unknown };
+        if self.cover > 0.0 && certain == 0 && mix.is_none() && prior.is_none() && k.sunk[4].is_none() {
+            let sunk_len: u32 = (0..SHIPS)
+                .filter(|&s| k.sunk[s].is_some())
+                .map(|s| LENGTHS[s] as u32)
+                .sum();
+            let hunting = k.hits.count() == sunk_len;
+            if hunting || (self.cover_target && self.cover < 10.0) {
+                let (mut across, mut down) = (0u128, 0u128);
+                for c in Bits(unknown) {
+                    if p.ships[4][2 * c] > 0 && unknown >> (c + 1) & 1 == 1 { across |= 1 << c; }
+                    if p.ships[4][2 * c + 1] > 0 && unknown >> (c + 10) & 1 == 1 { down |= 1 << c; }
+                }
+                let cover = super::cover::cover_cells(across, down);
+                if cover != 0 {
+                    if self.cover >= 10.0 {
+                        pool = cover;
+                    } else {
+                        for c in Bits(cover) { scores[c] *= 1.0 + self.cover; }
+                    }
+                }
+            }
+        }
+        if self.parity > 0 && certain == 0 && mix.is_none() && prior.is_none() {
+            let sunk_len: u32 = (0..SHIPS)
+                .filter(|&s| k.sunk[s].is_some())
+                .map(|s| LENGTHS[s] as u32)
+                .sum();
+            let smallest = (0..SHIPS).filter(|&s| k.sunk[s].is_none()).map(|s| LENGTHS[s]).min().unwrap();
+            if k.hits.count() == sunk_len && (smallest == 2 || self.parity == 2) {
+                // The colour class holding the most weight of the smallest ships.
+                let by_ship = p.ship_cells();
+                let mut best = (-1.0, 0u128);
+                for col in 0..smallest {
+                    let mut m = 0u128;
+                    let mut w = 0.0;
+                    for c in Bits(unknown) {
+                        if (c / 10 + c % 10) % smallest == col {
+                            let v: u64 = (0..SHIPS).filter(|&s| k.sunk[s].is_none() && LENGTHS[s] == smallest).map(|s| by_ship[s][c]).sum();
+                            if v > 0 { m |= 1 << c; w += v as f64; }
+                        }
+                    }
+                    // Stick with the colour most shot already: fewest unshot cells per weight.
+                    let shot = Bits(k.shots().0).filter(|&c| (c / 10 + c % 10) % smallest == col).count() as f64;
+                    let key = shot * 1e6 + w / p.layouts as f64;
+                    if m != 0 && key > best.0 { best = (key, m); }
+                }
+                if best.1 != 0 { pool = best.1; }
+            }
+        }
         let sample = mix.is_none() && s.samples >= 2;
         if (k.afloat_mask().count_ones() as usize) <= s.max_afloat && sample {
             let mut cands: Vec<usize> = Bits(pool).collect();

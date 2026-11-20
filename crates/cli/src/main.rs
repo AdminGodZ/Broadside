@@ -20,7 +20,8 @@ Commands:
   sim      Shots-to-win statistics of a shooter vs a placer
              --shooter NAME (broadside)  --placer NAME (uniform)
              --dump FILE  also write every game (layout, shots) as CSV
-  compare  Two shooters on the same layouts: compare A B [--placer P]
+  compare  Shooters on the same layouts: compare A [A2 ...] B [--placer P]
+             every shooter is measured against the last one
   duel     Head-to-head win rate: duel A B [--placer-a P] [--placer-b P]
              --match N  play matches of N games in which both sides may learn
              --dump FILE  also write both sides' shots-to-win histograms as CSV
@@ -181,9 +182,13 @@ fn cmd_sim(o: &Opts) -> Result<(), String> {
 /// game varies far less than either shooter's score, so small gains show up
 /// in a fraction of the games an unpaired comparison needs.
 fn cmd_compare(o: &Opts) -> Result<(), String> {
-    let [a, b] = [1, 2].map(|i| o.pos.get(i).cloned().unwrap_or_default());
-    check_shooter(&a)?;
-    check_shooter(&b)?;
+    let names: Vec<String> = o.pos[1..].to_vec();
+    if names.len() < 2 {
+        return Err("compare needs two shooters or more: compare A [A2 ...] B".into());
+    }
+    for n in &names {
+        check_shooter(n)?;
+    }
     let pl = o.str("placer", "uniform");
     check_placer(&pl)?;
     let games = o.get("games", 1000u64)?;
@@ -209,29 +214,35 @@ fn cmd_compare(o: &Opts) -> Result<(), String> {
         println!("  {:.2?}/game", start.elapsed() / games.max(1) as u32);
         played
     };
-    let (ga, gb) = (run(&a), run(&b));
-    let d: Vec<f64> = ga
-        .iter()
-        .zip(&gb)
-        .map(|(x, y)| y.shots as f64 - x.shots as f64)
-        .collect();
-    let n = d.len() as f64;
-    let mean = d.iter().sum::<f64>() / n;
-    let sd = (d.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
-    let (se, wins) = (sd / n.sqrt(), |f: fn(f64) -> bool| {
-        d.iter().filter(|&&x| f(x)).count()
-    });
-    println!(
-        "{a} saves {mean:+.4} ± {se:.4} shots per game over {b} (95% interval {:+.4} to {:+.4})",
-        mean - 1.96 * se,
-        mean + 1.96 * se
-    );
-    println!(
-        "  better in {} games, worse in {}, equal in {}; seed {seed}",
-        wins(|x| x > 0.0),
-        wins(|x| x < 0.0),
-        wins(|x| x == 0.0)
-    );
+    // The last shooter is the one the others are measured against.
+    let (b, others) = names.split_last().unwrap();
+    let gb = run(b);
+    for a in others {
+        let ga = run(a);
+        let d: Vec<f64> = ga
+            .iter()
+            .zip(&gb)
+            .map(|(x, y)| y.shots as f64 - x.shots as f64)
+            .collect();
+        let n = d.len() as f64;
+        let mean = d.iter().sum::<f64>() / n;
+        let sd =
+            (d.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
+        let (se, wins) = (sd / n.sqrt(), |f: fn(f64) -> bool| {
+            d.iter().filter(|&&x| f(x)).count()
+        });
+        println!(
+            "{a} saves {mean:+.4} ± {se:.4} shots per game over {b} (95% interval {:+.4} to {:+.4})",
+            mean - 1.96 * se,
+            mean + 1.96 * se
+        );
+        println!(
+            "  better in {} games, worse in {}, equal in {}; seed {seed}",
+            wins(|x| x > 0.0),
+            wins(|x| x < 0.0),
+            wins(|x| x == 0.0)
+        );
+    }
     Ok(())
 }
 
