@@ -127,7 +127,18 @@ button { font: inherit; color: inherit; }
 .cell.hit::after { transform: rotate(-45deg); }
 .cell.sinker { box-shadow: inset 0 0 0 2px var(--hit); border-radius: 4cqw; }
 .ring { position: absolute; inset: 9%; border: 2px solid var(--mark); border-radius: 50%; z-index: 2; }
+/* Heat: the chance the engine gives each cell of holding a ship, shaded linearly
+   (opacity .85 at certainty), the exact figure on hover. */
 .heat { position: absolute; inset: 0; background: var(--mark); pointer-events: none; z-index: 0; }
+.pct {
+  position: absolute; bottom: calc(100% + 6px); left: 50%; translate: -50% 0; z-index: 5; pointer-events: none;
+  background: var(--ink); color: var(--paper); font-size: .85rem; line-height: 1; padding: 6px 8px; border-radius: 4px;
+  white-space: nowrap; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .1s;
+}
+.cell:hover .pct { opacity: 1; }
+.heat-scale { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: .85rem; }
+.heat-scale i { display: block; width: 96px; height: 10px; border-radius: 3px; border: 1px solid var(--rule);
+  background: linear-gradient(to right, var(--water), color-mix(in oklab, var(--mark) 85%, var(--water))); }
 .placing #home .cell { cursor: pointer; }
 .target .cell.open { cursor: crosshair; }
 .target .cell.open:hover { background: color-mix(in oklab, var(--mark) 30%, transparent); }
@@ -228,7 +239,10 @@ kbd { font: .8rem ui-monospace, Menlo, monospace; border: 1px solid var(--rule);
       <div class="col-head"><h2 id="home-title">Your fleet</h2><span id="it-shots"></span></div>
       <div class="chart" id="home"></div>
       <ul class="tally" id="my-fleet" aria-label="Your ships"></ul>
-      <label class="toggle" id="heat-toggle"><input type="checkbox" id="heat"> Show where the engine expects your ships</label>
+      <div class="tools" id="heat-toggle">
+        <label class="toggle"><input type="checkbox" id="heat"> Show where the engine expects your ships</label>
+        <span class="heat-scale" id="heat-scale" aria-hidden="true">0%<i></i>100%</span>
+      </div>
     </section>
     <aside class="dock" id="dock" aria-label="Ships to place">
       <ol class="ships" id="dock-ships"></ol>
@@ -425,8 +439,6 @@ function finish(youWon) {
   b.innerHTML = youWon
     ? `<h3>Victory in ${S.you.count} shots</h3><p>You sank the engine's fleet first. It had ${17 - [...S.it.shots.values()].filter(o => o > 0).length} of your ship cells still to find.</p>`
     : `<h3>The engine wins in ${S.it.count} shots</h3><p>You had ${left} ship cell${left === 1 ? "" : "s"} left to find. Its fleet is outlined in enemy waters.</p>`;
-  const pct = k => Math.round(100 * E.bs_spacing(k));
-  b.innerHTML += `<p>What it now expects of your next fleet: ships apart ${pct(0)}%, touching only at corners ${pct(1)}%, side by side ${pct(2)}%. Random placement would give 13%, 6% and 81%.</p>`;
   b.hidden = false;
   render();
 }
@@ -509,6 +521,7 @@ function render() {
   $("dock").hidden = !placing;
   $("my-fleet").hidden = placing;
   $("heat-toggle").hidden = placing;
+  $("heat-scale").hidden = !$("heat").checked;
   $("log-box").hidden = placing;
 
   // Enemy waters
@@ -548,15 +561,19 @@ function render() {
   home.cells.forEach((b, i) => {
     const o = S.it.shots.get(i);
     b.className = "cell" + (o === undefined ? "" : o === 0 ? " miss" : " hit") + (S.it.last === i ? " fresh" : "");
-    b.disabled = !placing;
+    // Not disabled in battle (a disabled cell gets no hover, so no figure); just out of the tab order.
+    b.tabIndex = placing ? 0 : -1;
     b.innerHTML = "";
+    let chance = "";
     if (showHeat && o === undefined) {
+      const h = E.bs_heat(i);
+      chance = h <= 0 ? "0%" : h >= 1 ? "100%" : h < .005 ? "under 1%" : h > .995 ? "over 99%" : Math.round(h * 100) + "%";
       const d = Object.assign(document.createElement("span"), { className: "heat" });
-      d.style.opacity = (Math.min(1, E.bs_heat(i) * 1.6) * 0.75).toFixed(3);
-      b.appendChild(d);
+      d.style.opacity = (h * 0.85).toFixed(3);
+      b.append(d, Object.assign(document.createElement("span"), { className: "pct", textContent: `${name(i)}: ${chance}` }));
     }
     if (S.it.last === i && !placing) b.appendChild(Object.assign(document.createElement("span"), { className: "ring" }));
-    b.setAttribute("aria-label", name(i) + (occ.has(i) ? ", " + SHIPS[occ.get(i)][0] : "") + (o === undefined ? "" : ", " + OUT(o)));
+    b.setAttribute("aria-label", name(i) + (occ.has(i) ? ", " + SHIPS[occ.get(i)][0] : "") + (o === undefined ? "" : ", " + OUT(o)) + (chance ? `, engine's chance ${chance}` : ""));
   });
 
   if (placing) renderDock();
