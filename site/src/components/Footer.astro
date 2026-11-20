@@ -5,7 +5,10 @@ import GithubIcon from "./GithubIcon.astro";
 ---
 
 <footer>
-  <p>Broadside {VERSION}, made by <a href="https://admingod.ch">AdminGod</a>.</p>
+  <p>
+    Broadside {VERSION}, made by <a href="https://admingod.ch">AdminGod</a>. Free under the{" "}
+    <a href={`${REPO}/blob/main/LICENSE`}>MIT license</a>.
+  </p>
   <nav aria-label="Footer">
     <a href={REPO} class="with-icon"><GithubIcon />Source</a>
     <a href={RELEASES} class="with-icon"><Tag class="icon" />Releases</a>
