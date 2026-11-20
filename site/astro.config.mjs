@@ -1,3 +1,4 @@
+import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, fontProviders } from "astro/config";
 
 // Fonts come from the installed Fontsource packages (no network at build time).
@@ -44,6 +45,7 @@ export default defineConfig({
     },
   ],
   vite: {
+    plugins: [tailwindcss()],
     // The logo is imported from the repository's assets/ folder, outside this project.
     server: { fs: { allow: [".."] } },
   },

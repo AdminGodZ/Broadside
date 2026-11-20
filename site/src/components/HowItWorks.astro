@@ -3,6 +3,7 @@ import Brain from "@lucide/astro/icons/brain";
 import GitBranch from "@lucide/astro/icons/git-branch";
 import Sigma from "@lucide/astro/icons/sigma";
 import { REPO } from "../lib/site";
+import ExternalLink from "./ExternalLink.astro";
 import GithubIcon from "./GithubIcon.astro";
 
 const ideas = [
@@ -24,34 +25,22 @@ const ideas = [
 ];
 ---
 
-<section class="section" id="how">
+<section class="pt-section" id="how">
   <h2>How it works</h2>
-  <div class="ideas">
+  <div class="mt-3 grid grid-cols-1 gap-x-12 gap-y-8 lg:grid-cols-3">
     {
       ideas.map(({ icon: Icon, title, text }) => (
         <div>
-          <span class="tile">
-            <Icon class="icon" />
+          <span class="mb-[18px] grid size-[46px] place-items-center rounded-[10px] border border-rule bg-water">
+            <Icon class="icon size-[22px] stroke-[1.6]" />
           </span>
           <h3>{title}</h3>
-          <p>{text}</p>
+          <p class="max-w-[38ch] text-ink-soft">{text}</p>
         </div>
       ))
     }
   </div>
-  <p class="more">
-    <a href={`${REPO}#how-it-works`} class="with-icon"><GithubIcon />Read the full method and every measurement on GitHub</a>
+  <p class="mt-9">
+    <ExternalLink href={`${REPO}#how-it-works`}><GithubIcon />Read the full method and every measurement on GitHub</ExternalLink>
   </p>
 </section>
-
-<style>
-  .ideas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px 48px; margin-top: 12px; }
-  @media (max-width: 860px) { .ideas { grid-template-columns: minmax(0, 1fr); } }
-  .tile {
-    display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 18px;
-    border-radius: 10px; background: var(--water); border: 1px solid var(--rule);
-  }
-  .tile :global(.icon) { width: 22px; height: 22px; stroke-width: 1.6; }
-  .ideas p { color: var(--ink-soft); margin: 0; max-width: 38ch; }
-  .more { margin: 36px 0 0; }
-</style>

@@ -4,17 +4,13 @@ import ExternalLinkIcon from "@lucide/astro/icons/external-link";
 
 interface Props {
   href: string;
+  class?: string;
 }
-const { href } = Astro.props;
+const { href, class: className } = Astro.props;
 ---
 
-<a href={href} class="with-icon" target="_blank" rel="noopener">
+<a href={href} class:list={["with-icon gap-[.4em]", className]} target="_blank" rel="noopener">
   <slot />
-  <ExternalLinkIcon class="icon external" aria-hidden="true" />
-  <span class="visually-hidden">(opens in a new tab)</span>
+  <ExternalLinkIcon class="icon -ml-[.05em] size-[.8em] opacity-75" aria-hidden="true" />
+  <span class="sr-only">(opens in a new tab)</span>
 </a>
-
-<style>
-  a { gap: .4em; }
-  .external { width: .8em; height: .8em; margin-left: -.05em; opacity: .75; }
-</style>

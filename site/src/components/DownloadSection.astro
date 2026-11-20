@@ -6,30 +6,50 @@ import Laptop from "@lucide/astro/icons/laptop";
 import Monitor from "@lucide/astro/icons/monitor";
 import Terminal from "@lucide/astro/icons/terminal";
 import { RELEASES, SYSTEMS, VERSION } from "../lib/site";
+import Button from "./Button.astro";
 
 const kinds = { laptop: Laptop, monitor: Monitor };
+const note = "flex gap-[9px] text-ink-soft";
 ---
 
-<section class="section download" id="download">
+{/* Parts marked os-*: shown for the visitor's system (html[data-os], set by the script below); all show when unknown. */}
+<section class="grid grid-cols-1 items-start gap-x-18 gap-y-10 pt-section lg:grid-cols-2" id="download">
   <div>
     <h2>Download</h2>
-    <p class="lead">
+    <p class="mb-7 max-w-[46ch] text-ink-soft">
       The terminal version. Play against the engine, let it call your shots in a game against someone else, or run your
       own experiments. One file, nothing to install.
     </p>
-    <a class="button primary" id="download-main" href={`${RELEASES}/latest`} data-version={VERSION}>
+    <p class:list={[note, "-mt-2 mb-7 hidden os-mobile:flex"]}>
+      <Info class="icon mt-[.15em]" />
+      <span>It runs on Mac, Windows and Linux computers. On this device, <a href="/play">play in your browser</a>.</span>
+    </p>
+    <Button primary id="download-main" href={`${RELEASES}/latest`} data-version={VERSION}>
       <Download class="icon" /><span id="download-label">See all downloads</span>
-    </a>
-    <details class="systems">
-      <summary><ChevronRight class="icon" />Other systems</summary>
-      <ul>
+    </Button>
+    {/* A menu over the page, so opening it moves nothing below. */}
+    <details class="systems group relative mt-5 w-max">
+      <summary
+        class="with-icon cursor-pointer gap-1.5 text-ink-soft select-none hover:text-ink [&::-webkit-details-marker]:hidden"
+      >
+        <ChevronRight class="icon transition-[rotate] duration-150 group-open:rotate-90 motion-reduce:transition-none" />
+        Other systems
+      </summary>
+      <ul
+        class="absolute top-[calc(100%+8px)] -left-1.5 z-10 grid min-w-max gap-0.5 rounded-md border border-rule bg-paper p-1.5 shadow-[0_10px_30px_-12px_rgb(0_0_0/.35)]"
+      >
         {
           SYSTEMS.map((s) => {
             const Kind = kinds[s.kind];
             return (
               <li data-os={s.id}>
-                <a href={s.url} class="with-icon" data-button={s.button} data-name={s.name}>
-                  <Kind class="icon" />
+                <a
+                  href={s.url}
+                  class="with-icon flex rounded py-1.5 pr-3 pl-2.5 no-underline hover:bg-water"
+                  data-button={s.button}
+                  data-name={s.name}
+                >
+                  <Kind class="icon text-ink-soft" />
                   {s.name}
                 </a>
               </li>
@@ -38,18 +58,74 @@ const kinds = { laptop: Laptop, monitor: Monitor };
         }
       </ul>
     </details>
+    <script is:inline>
+      // Runs as soon as the button and the list are parsed, so the generic button never shows first.
+      // Picks this computer's build for the main button and hides it in the list; data-os on <html>
+      // tailors the instructions. Browsers say "Intel" on every Mac, so Macs start on Apple Silicon
+      // and move to Intel only when the browser reveals an Intel CPU or graphics chip.
+      (() => {
+        const ua = navigator.userAgent;
+        const uaData = navigator.userAgentData;
+        const platform = uaData?.platform || navigator.platform || "";
+        const touchMac = /Mac/i.test(platform) && navigator.maxTouchPoints > 1; // iPadOS asks for desktop sites
+        let os = null;
+        if (/iPhone|iPad|iPod|Android/i.test(ua) || touchMac) os = "mobile";
+        else if (/Win/i.test(platform)) os = "windows";
+        else if (/Mac/i.test(platform)) os = "mac";
+        else if (/Linux|X11|CrOS/i.test(platform + ua)) os = "linux";
+        if (os) document.documentElement.dataset.os = os;
+
+        const main = document.getElementById("download-main");
+        const label = document.getElementById("download-label");
+        let shown = null;
+        function show(id) {
+          const item = document.querySelector(`.systems li[data-os="${id}"]`);
+          const link = item?.querySelector("a");
+          if (!link || !main || !label) return;
+          shown?.removeAttribute("hidden");
+          item.setAttribute("hidden", "");
+          shown = item;
+          main.href = link.href;
+          label.textContent = link.dataset.button;
+          const small = document.createElement("small");
+          small.className = "mt-[5px] block text-[.8rem] font-normal opacity-80";
+          small.textContent = `${link.dataset.name}, version ${main.dataset.version}`;
+          label.append(small);
+        }
+        if (os === "windows") show("windows");
+        if (os === "mac") show("mac-arm");
+        if (os === "linux") show(/aarch64|arm/i.test(platform + ua) ? "linux-arm" : "linux");
+        if (os !== "mac" && os !== "linux") return;
+
+        // The CPU, where the browser tells (Chromium), else a hint from the graphics chip (Firefox).
+        const pick = (x86) => show(os === "mac" ? (x86 ? "mac-intel" : "mac-arm") : x86 ? "linux" : "linux-arm");
+        if (uaData?.getHighEntropyValues) {
+          uaData.getHighEntropyValues(["architecture"]).then((v) => v.architecture && pick(v.architecture === "x86"), () => {});
+        } else if (os === "mac") {
+          try {
+            const gl = document.createElement("canvas").getContext("webgl");
+            const info = gl?.getExtension("WEBGL_debug_renderer_info");
+            const gpu = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : "";
+            if (/Intel|AMD|Radeon/i.test(gpu)) pick(true);
+          } catch {}
+        }
+      })();
+    </script>
   </div>
-  <div class="run">
+  <div class="rounded-md bg-water px-7 pt-[26px] pb-2.5 text-base">
     <h3 class="with-icon"><Terminal class="icon" />Then run it</h3>
-    <pre><code>./broadside play --heat
+    <pre class="mb-[18px] overflow-x-auto text-[1.05rem] leading-[1.7] os-windows:hidden"><code>./broadside play --heat
 ./broadside assist</code></pre>
-    <p>
+    <pre class="mb-[18px] hidden overflow-x-auto text-[1.05rem] leading-[1.7] os-windows:block"><code>broadside.exe play --heat
+broadside.exe assist</code></pre>
+    <p class="mb-4 text-ink-soft [&_code]:text-ink">
       <code>play</code> is a game against the engine; <code>--heat</code> shows where it expects your ships.{" "}
-      <code>assist</code> tells you where to fire in a game against anyone else. On Windows, use{" "}
-      <code>broadside.exe</code>.
+      <code>assist</code> tells you where to fire in a game against anyone else.<span class="os-known:hidden">
+        On Windows, use <code>broadside.exe</code>.</span
+      >
     </p>
-    <p class="fine note">
-      <Info class="icon" />
+    <p class:list={[note, "mb-4 os-known:hidden os-mac:flex"]}>
+      <Info class="icon mt-[.15em]" />
       <span>
         On a Mac, the first launch is blocked because the app isn't signed with an Apple developer ID. Allow it in System
         Settings under Privacy &amp; Security.
@@ -59,29 +135,6 @@ const kinds = { laptop: Laptop, monitor: Monitor };
 </section>
 
 <script>
-  // Point the main button at the build for this computer when the browser says which it is.
-  // Browsers report Intel on every Mac, so Macs get the Apple Silicon build; Intel stays in the list.
-  const ua = navigator.userAgent;
-  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
-  const platform = nav.userAgentData?.platform || navigator.platform || "";
-  let os: string | null = null;
-  if (/Win/i.test(platform) || /Windows/i.test(ua)) os = "windows";
-  else if (/Mac/i.test(platform) && !/iPhone|iPad/i.test(ua)) os = "mac-arm";
-  else if (/Linux/i.test(platform) && !/Android/i.test(ua)) os = /aarch64|arm/i.test(platform + ua) ? "linux-arm" : "linux";
-
-  const item = os ? document.querySelector<HTMLLIElement>(`.systems li[data-os="${os}"]`) : null;
-  const link = item?.querySelector<HTMLAnchorElement>("a");
-  const main = document.querySelector<HTMLAnchorElement>("#download-main");
-  const label = document.querySelector<HTMLElement>("#download-label");
-  if (item && link && main && label) {
-    main.href = link.href;
-    label.textContent = link.dataset.button ?? "Download";
-    const small = document.createElement("small");
-    small.textContent = `${link.dataset.name}, version ${main.dataset.version}`;
-    label.append(small);
-    item.remove();
-  }
-
   // The list is a menu over the page: close it on a click elsewhere or on Escape.
   const systems = document.querySelector<HTMLDetailsElement>(".systems");
   if (systems) {
@@ -96,38 +149,3 @@ const kinds = { laptop: Laptop, monitor: Monitor };
     });
   }
 </script>
-
-<style>
-  .download { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px 72px; align-items: start; }
-  @media (max-width: 860px) { .download { grid-template-columns: minmax(0, 1fr); } }
-  .lead { max-width: 46ch; color: var(--ink-soft); margin-bottom: 28px; }
-
-  /* The list opens over the page, like a menu, so nothing below it moves. */
-  .systems { margin-top: 20px; position: relative; width: max-content; }
-  summary {
-    cursor: pointer; color: var(--ink-soft); width: max-content; list-style: none;
-    display: flex; align-items: center; gap: 6px;
-  }
-  summary::-webkit-details-marker { display: none; }
-  summary:hover { color: var(--ink); }
-  summary :global(.icon) { transition: transform .15s; translate: 0 -.07em; }
-  .systems[open] summary :global(.icon) { transform: rotate(90deg); }
-  @media (prefers-reduced-motion: reduce) { summary :global(.icon) { transition: none; } }
-  ul {
-    list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px;
-    position: absolute; top: calc(100% + 8px); left: -6px; z-index: 10; min-width: max-content;
-    background: var(--paper); border: 1px solid var(--rule); border-radius: 6px;
-    box-shadow: 0 10px 30px -12px rgb(0 0 0 / .35);
-  }
-  li a { display: flex; padding: 6px 12px 6px 10px; border-radius: 4px; text-decoration: none; }
-  li a:hover { background: var(--water); }
-  li :global(.icon) { color: var(--ink-soft); }
-
-  .run { background: var(--water); border-radius: 6px; padding: 26px 28px 10px; }
-  pre { margin: 0 0 18px; padding: 0; overflow-x: auto; line-height: 1.7; font-size: 1.05rem; }
-  .run p { color: var(--ink-soft); font-size: 1rem; }
-  .run p code { color: var(--ink); }
-  .note { display: flex; gap: 9px; }
-  /* Centred on the first line: half-leading .3em, plus .43em to the optical middle, less half the icon. */
-  .note :global(.icon) { margin-top: .18em; }
-</style>
