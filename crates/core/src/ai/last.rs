@@ -545,6 +545,17 @@ mod tests {
         }
     }
 
+    /// One Destroyer alone on the whole board: 4,676 shots over its 180 placements, 1169/45 each.
+    /// The bound and the first line of play meet, so no position has to be opened.
+    #[test]
+    fn one_destroyer_on_the_whole_board() {
+        let found = best(Bitboard::FULL, 2, 1_000).expect("within budget");
+        assert_eq!(
+            (found.total, found.placements, found.opened),
+            (4676, 180, 0)
+        );
+    }
+
     #[test]
     fn the_bound_never_exceeds_the_cost_and_the_search_agrees_with_plain_recursion() {
         let mut rng = Rng::new(11);
