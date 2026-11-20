@@ -36,6 +36,9 @@ body {
 .wrap { max-width: 1040px; margin: 0 auto; }
 a { color: inherit; text-underline-offset: .18em; text-decoration-thickness: 1px; }
 :focus-visible { outline: 2.5px solid var(--mark); outline-offset: 3px; border-radius: 2px; }
+/* Browsers show the focus ring after any key press, so R (turn) after a click would ring the
+   clicked cell. Rings show only while navigating by keyboard (body.kbd, set below). */
+body:not(.kbd) :focus-visible { outline: none; }
 
 /* Header: the name, back to the website, and the session's score. */
 .top {
@@ -360,6 +363,9 @@ function randomFleet() {
 }
 function clearFleet() { S.fleet = [null, null, null, null, null]; S.selected = 0; note(null); render(); }
 function setVertical(v) { S.vertical = v; render(); }
+// Keyboard navigation (Tab, arrows) turns focus rings on; a pointer turns them off again.
+document.addEventListener("keydown", e => { if (e.key === "Tab" || e.key.startsWith("Arrow")) document.body.classList.add("kbd"); });
+document.addEventListener("pointerdown", () => document.body.classList.remove("kbd"));
 document.addEventListener("keydown", e => {
   if (S.phase !== "placing" || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === "r" || e.key === "R") setVertical(!S.vertical);
