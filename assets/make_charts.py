@@ -18,7 +18,6 @@ skill = (mb - ma) ** 2 / ((mb - ma) ** 2 + sa**2 + sb**2)
 NAVY, NAVY2, LINE, INK, SOFT = "#08131c", "#123349", "#1e3e56", "#dce8ef", "#7f9bb0"
 A, B = "#3987e5", "#d95926"  # validated pair on the navy surface (OKLab CVD ΔE 26.8)
 FONT = "Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif"
-MONO = "JetBrains Mono, ui-monospace, Menlo, Consolas, monospace"
 W, H = 1290, 590
 o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="Broadside against the parity bot: 10,000 games">',
      "<title>Broadside vs parity, 10,000 games</title>",
@@ -27,7 +26,7 @@ o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}"
 t = lambda x, y, s, size=13, fill=SOFT, anchor="start", weight=400, font=FONT, ls=0: o.append(
     f'<text x="{x:.1f}" y="{y:.1f}" fill="{fill}" font-family="{font}" font-size="{size}" font-weight="{weight}" text-anchor="{anchor}" letter-spacing="{ls}">{s}</text>')
 
-t(40, 52, "BROADSIDE VS THE PARITY BOT · 10,000 GAMES", 15, INK, weight=600, font=MONO, ls=2.5)
+t(40, 52, "Broadside against the parity bot, 10,000 games", 16, INK, weight=600)
 t(40, 76, "Uniformly placed fleets, no learning between games, first move alternating.", 13)
 # headline figures
 for i, (big, small) in enumerate([(f"{100 * 7076 / 10000:.1f}%", "Broadside wins (± 0.45)"),

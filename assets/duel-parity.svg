@@ -2,7 +2,7 @@
 <title>Broadside vs parity, 10,000 games</title>
 <defs><radialGradient id="bg" cx="50%" cy="30%" r="80%"><stop offset="0" stop-color="#123349"/><stop offset="1" stop-color="#08131c"/></radialGradient></defs>
 <rect width="1290" height="590" rx="28" fill="url(#bg)"/>
-<text x="40.0" y="52.0" fill="#dce8ef" font-family="JetBrains Mono, ui-monospace, Menlo, Consolas, monospace" font-size="15" font-weight="600" text-anchor="start" letter-spacing="2.5">BROADSIDE VS THE PARITY BOT · 10,000 GAMES</text>
+<text x="40.0" y="52.0" fill="#dce8ef" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="16" font-weight="600" text-anchor="start" letter-spacing="0">Broadside against the parity bot, 10,000 games</text>
 <text x="40.0" y="76.0" fill="#7f9bb0" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">Uniformly placed fleets, no learning between games, first move alternating.</text>
 <text x="40.0" y="128.0" fill="#dce8ef" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="34" font-weight="600" text-anchor="start" letter-spacing="0">70.8%</text>
 <text x="40.0" y="150.0" fill="#7f9bb0" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="start" letter-spacing="0">Broadside wins (± 0.45)</text>

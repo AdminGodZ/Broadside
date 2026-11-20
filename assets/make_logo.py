@@ -1,12 +1,11 @@
-# Generates the Broadside logo, each in a dark and a light theme:
-#   assets/logo-{dark,light}.svg     the mark: a 10x10 Battleship chart with a B laid out as a fleet,
-#                                     two hits, a reticle on the second, misses over open sea
-#   assets/banner-{dark,light}.svg   the mark with the name beside it, for the README
-# The name is set in Saira Stencil One (the browser game's display face), the line under it in
-# Barlow, the chart's coordinates in JetBrains Mono. All text is turned into outlines, so the
-# SVGs look the same whatever fonts the viewer has.
-# Needs fontTools (pip install fonttools); the fonts (SIL OFL) are fetched from Google Fonts
-# into ~/.cache/broadside-fonts on first run.
+# Generates the Broadside logo in the website's look, each in a dark and a light theme:
+#   assets/logo-{dark,light}.svg     the mark: a patch of chart with a B laid out as a fleet, one ship hit
+#   assets/banner-{dark,light}.svg   the mark with the name and a line under it, for the README
+# Flat, in the site's colours (navy ink on chart paper; light and dark as on the site). The name is
+# set in Saira Stencil One, the line in Newsreader, as on the site. All text is turned into outlines,
+# so the SVGs look the same whatever fonts the viewer has.
+# Needs fontTools (pip install fonttools); the fonts (SIL OFL) are fetched from Google Fonts into
+# ~/.cache/broadside-fonts on first run.
 #   python3 assets/make_logo.py [outdir]
 import os
 import sys
@@ -17,8 +16,7 @@ out = sys.argv[1] if len(sys.argv) > 1 else "assets"
 # --- text as outlines ---
 FONTS = {
     "display": ("https://github.com/google/fonts/raw/main/ofl/sairastencilone/SairaStencilOne-Regular.ttf", None),
-    "body": ("https://github.com/google/fonts/raw/main/ofl/barlow/Barlow-SemiBold.ttf", None),
-    "mono": ("https://github.com/google/fonts/raw/main/ofl/jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf", {"wght": 700}),
+    "text": ("https://github.com/google/fonts/raw/main/ofl/newsreader/Newsreader%5Bopsz%2Cwght%5D.ttf", {"opsz": 24, "wght": 400}),
 }
 _fonts = {}
 
@@ -70,8 +68,8 @@ def kern(table, a, b):
                 return v.XAdvance
     return 0
 
-def outline(kind, text, size, x, y, fill, tracking=0.0, anchor="start"):
-    """Text as one SVG path with its baseline at y, starting at x (or centred on it); returns (path, width)."""
+def outline(kind, text, size, x, y, fill):
+    """Text as one SVG path with its baseline at y, starting at x; returns (path, width)."""
     from fontTools.pens.svgPathPen import SVGPathPen
     from fontTools.pens.transformPen import TransformPen
     f, gs, table = font(kind)
@@ -80,154 +78,92 @@ def outline(kind, text, size, x, y, fill, tracking=0.0, anchor="start"):
     advances, pen_x = [], 0.0
     for i, g in enumerate(names):
         advances.append(pen_x)
-        pen_x += gs[g].width * k + tracking
+        pen_x += gs[g].width * k
         if i + 1 < len(names):
             pen_x += kern(table, g, names[i + 1]) * k
-    width = pen_x - tracking
-    if anchor == "middle":
-        x -= width / 2
     pen = SVGPathPen(gs, ntos=lambda v: f"{v:.2f}".rstrip("0").rstrip("."))
     for g, ax in zip(names, advances):
         gs[g].draw(TransformPen(pen, (k, 0, 0, -k, x + ax, y)))
-    return f'<path fill="{fill}" d="{pen.getCommands()}"/>', width
+    return f'<path fill="{fill}" d="{pen.getCommands()}"/>', pen_x
 
 # --- the mark ---
-B = ["11110", "10001", "10001", "11110", "10001", "10001", "11110"]
-LIT = {(2 + c, 1 + r) for r, line in enumerate(B) for c, bit in enumerate(line) if bit == "1"}
-HITS = {(2, 4), (6, 2)}              # E3, C7
-MISSES = [(9, 1), (1, 3), (8, 6), (0, 8), (4, 9)]
-RETICLE = (6, 2)
+# A patch of chart with a B laid out as a fleet, as (column, row, length, vertical) on a
+# 4 x 7 pixel B:   #XX.   the spine (7) down the left; the three bars (2) beside it;
+#                  #..X   the two bowls (2) on the right
+#                  #..X
+#                  #XX.   Each hull keeps thin seams between its cells, so the letter keeps its
+#                  #..X   pixels (as a pixel font draws B) while each ship stays one piece.
+#                  #..X   One hit, on the upper bowl.
+#                  #XX.
+SHIPS = [(0, 0, 7, True), (1, 0, 2, False), (1, 3, 2, False), (1, 6, 2, False), (3, 1, 2, True), (3, 4, 2, True)]
+HIT = (3, 1)
 
-S = 512                              # canvas
-FRAME, RIM = 17, 7                   # outer tile inset, width of its bevelled rim
-RX = 96
-X0, CELL = 82.5, 37.1                # board origin and cell size
-GAP, TRX = 2.2, 6                    # tile inset and corner radius
+S = 512                     # canvas
+T = 16                      # tile inset
+RX = 104                    # tile corner radius
+N = 9                       # cells across the tile
+CELL = (S - 2 * T) / N
+OX, OY = (N - 4) / 2, (N - 7) / 2   # the B's top left, in cells: centred (the grid shifts with it)
+INSET = CELL * .07          # hull inset from its cells' edges
+HULL_RX = CELL * .2         # hull corner radius
+SEAM = CELL * .05           # the line between a ship's cells
+EDGE = 10                   # tile outline
 
+# The site's colours: the tile is its chart (water, ruled, outlined in ink), the ships ink.
 THEMES = {
-    "dark": dict(
-        rim=[(0, "#a6dcf8"), (.035, "#3f8fca"), (.12, "#0f2c48"), (.85, "#0b2640"), (.96, "#0a4d82"), (1, "#1a6aa6")],
-        face=[(0, "#04182c"), (1, "#020e1d")],
-        board=[(0, "#031629"), (.55, "#03182c"), (1, "#06497c")],
-        outline="#5b8fbf", edge="#6aa4d0", edge_glow=.9, grid="#173b58", label="#8fb6da",
-        hull=[(0, "#fdfdfe"), (.55, "#d2deea"), (1, "#a6bdd2")], shadow="#000a16", shadow_op=.7,
-        miss="#7ec5f9", miss_glow=True, halo=.42),
-    "light": dict(
-        rim=[(0, "#fbfdff"), (.04, "#e3ebf4"), (.12, "#ccd9e7"), (.88, "#c6d5e5"), (.97, "#a3b8cd"), (1, "#c3d2e2")],
-        face=[(0, "#dae6f4"), (1, "#e8f2fd")],
-        board=[(0, "#d6e5f4"), (.6, "#e0edfa"), (1, "#f1f9ff")],
-        outline="#b4c6d9", edge="#4a6d8e", edge_glow=0, grid="#c9daec", label="#1d3a55",
-        hull=[(0, "#ffffff"), (.6, "#eef3f8"), (1, "#d9e3ee")], shadow="#5d7894", shadow_op=.45,
-        miss="#456b8c", miss_glow=False, halo=.3),
+    "dark": dict(sea="#132439", rule="#26394f", ink="#e4e8e1", hit="#ef5f4c"),
+    "light": dict(sea="#e3e8e4", rule="#c4ccd0", ink="#13294b", hit="#c8372d"),
 }
-
-def stops(lst):
-    return "".join(f'<stop offset="{o}" stop-color="{c}"/>' for o, c in lst)
 
 def mark(t):
     """The mark's elements on a 512x512 canvas (no <svg> wrapper, so it can be placed in a banner)."""
-    b = CELL * 10
     o = []
-    o.append(f'''<defs>
-  <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">{stops(t["rim"])}</linearGradient>
-  <linearGradient id="face" x1="0" y1="0" x2="0" y2="1">{stops(t["face"])}</linearGradient>
-  <radialGradient id="board" cx="50%" cy="50%" r="72%">{stops(t["board"])}</radialGradient>
-  <linearGradient id="hull" x1="0" y1="0" x2="0" y2="1">{stops(t["hull"])}</linearGradient>
-  <radialGradient id="hit" cx="50%" cy="45%" r="62%">
-    <stop offset="0" stop-color="#ffd3c2"/><stop offset=".22" stop-color="#ffab98"/><stop offset=".6" stop-color="#fd3f37"/><stop offset="1" stop-color="#e8120b"/>
-  </radialGradient>
-  <radialGradient id="halo" cx="50%" cy="50%" r="50%">
-    <stop offset=".45" stop-color="#ffbe0a" stop-opacity="{t["halo"]}"/><stop offset=".8" stop-color="#ffbe0a" stop-opacity="{t["halo"] * .35:.3f}"/><stop offset="1" stop-color="#ffbe0a" stop-opacity="0"/>
-  </radialGradient>
-  <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
-    <feGaussianBlur in="SourceAlpha" stdDeviation="1.6"/><feOffset dy="2.2" result="s"/>
-    <feFlood flood-color="{t["shadow"]}" flood-opacity="{t["shadow_op"]}"/><feComposite in2="s" operator="in"/>
-    <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
-  </filter>
-  <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
-    <feGaussianBlur stdDeviation="4.5" result="b"/>
-    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-  </filter>
-  <filter id="soft" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="3"/></filter>
-</defs>''')
-    # the tile: bevelled rim, then the face it frames
-    o.append(f'<rect x="{FRAME}" y="{FRAME}" width="{S - 2 * FRAME}" height="{S - 2 * FRAME}" rx="{RX}" fill="url(#rim)" stroke="{t["outline"]}" stroke-width="1.2"/>')
-    f = FRAME + RIM
-    o.append(f'<rect x="{f}" y="{f}" width="{S - 2 * f}" height="{S - 2 * f}" rx="{RX - RIM}" fill="url(#face)"/>')
-    # coordinates
-    for i, ch in enumerate("ABCDEFGHIJ"):
-        o.append(outline("mono", ch, 18, 65, X0 + (i + .5) * CELL + 6.5, t["label"], anchor="middle")[0])
-    for i in range(10):
-        o.append(outline("mono", str(i + 1), 18, X0 + (i + .5) * CELL, 68, t["label"], anchor="middle")[0])
-    # the chart
-    if t["edge_glow"]:
-        o.append(f'<rect x="{X0}" y="{X0}" width="{b:.1f}" height="{b:.1f}" fill="none" stroke="{t["edge"]}" stroke-width="4" opacity="{t["edge_glow"]}" filter="url(#soft)"/>')
-    o.append(f'<rect x="{X0}" y="{X0}" width="{b:.1f}" height="{b:.1f}" fill="url(#board)"/>')
-    for k in range(1, 10):
-        p = X0 + k * CELL
-        o.append(f'<path d="M{p:.1f} {X0}V{X0 + b:.1f}M{X0} {p:.1f}H{X0 + b:.1f}" stroke="{t["grid"]}" stroke-width="1.2"/>')
-    o.append(f'<rect x="{X0}" y="{X0}" width="{b:.1f}" height="{b:.1f}" fill="none" stroke="{t["edge"]}" stroke-width="1.6"/>')
-    for (c, r) in MISSES:
-        cx, cy = X0 + (c + .5) * CELL, X0 + (r + .5) * CELL
-        glow = ' filter="url(#glow)"' if t["miss_glow"] else ""
-        o.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3.9" fill="{t["miss"]}"{glow}/>')
-    w = CELL - 2 * GAP
-    rc, rr = RETICLE
-    rcx, rcy = X0 + (rc + .5) * CELL, X0 + (rr + .5) * CELL
-    o.append(f'<circle cx="{rcx:.1f}" cy="{rcy:.1f}" r="47" fill="url(#halo)"/>')
-    o.append('<g filter="url(#shadow)">')
-    for (c, r) in sorted(LIT - HITS):
-        o.append(f'<rect x="{X0 + c * CELL + GAP:.1f}" y="{X0 + r * CELL + GAP:.1f}" width="{w:.1f}" height="{w:.1f}" rx="{TRX}" fill="url(#hull)"/>')
-    o.append("</g>")
-    # the reticle sits over the fleet, the hit it marks over the reticle
-    y = "#ffbd07"
-    o.append(f'<circle cx="{rcx:.1f}" cy="{rcy:.1f}" r="43" fill="none" stroke="{y}" stroke-width="1.4" opacity=".28"/>')
-    o.append(f'<circle cx="{rcx:.1f}" cy="{rcy:.1f}" r="29.4" fill="none" stroke="{y}" stroke-width="3"/>')
-    a, e = 17, 42.5
-    o.append(f'<path d="M{rcx - e:.1f} {rcy:.1f}H{rcx - a:.1f}M{rcx + a:.1f} {rcy:.1f}H{rcx + e:.1f}'
-             f'M{rcx:.1f} {rcy - e:.1f}V{rcy - a:.1f}M{rcx:.1f} {rcy + a:.1f}V{rcy + e:.1f}" stroke="{y}" stroke-width="3" stroke-linecap="round"/>')
-    for (c, r) in sorted(HITS):
-        o.append(f'<rect x="{X0 + c * CELL + GAP:.1f}" y="{X0 + r * CELL + GAP:.1f}" width="{w:.1f}" height="{w:.1f}" rx="{TRX}" fill="url(#hit)" filter="url(#glow)"/>')
+    w = S - 2 * T
+    X, Y = T + OX * CELL, T + OY * CELL          # the B's origin
+    o.append(f'<defs><clipPath id="tile"><rect x="{T}" y="{T}" width="{w}" height="{w}" rx="{RX}"/></clipPath></defs>')
+    o.append(f'<rect x="{T}" y="{T}" width="{w}" height="{w}" rx="{RX}" fill="{t["sea"]}"/>')
+    xs = [X + k * CELL for k in range(-N, N) if T < X + k * CELL < S - T]
+    ys = [Y + k * CELL for k in range(-N, N) if T < Y + k * CELL < S - T]
+    lines = "".join(f"M{x:.2f} {T}V{S - T}" for x in xs) + "".join(f"M{T} {y:.2f}H{S - T}" for y in ys)
+    o.append(f'<path d="{lines}" stroke="{t["rule"]}" stroke-width="3" clip-path="url(#tile)"/>')
+    for c, r, n, v in SHIPS:
+        x, y = X + c * CELL + INSET, Y + r * CELL + INSET
+        wd, ht = (CELL if v else n * CELL) - 2 * INSET, (n * CELL if v else CELL) - 2 * INSET
+        o.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{wd:.2f}" height="{ht:.2f}" rx="{HULL_RX:.2f}" fill="{t["ink"]}"/>')
+        # Seams between the hull's cells: each ship stays one piece, but the B keeps its cells.
+        for k in range(1, n):
+            p = (Y + (r + k) * CELL) if v else (X + (c + k) * CELL)
+            seam = f"M{x:.2f} {p:.2f}H{x + wd:.2f}" if v else f"M{p:.2f} {y:.2f}V{y + ht:.2f}"
+            o.append(f'<path d="{seam}" stroke="{t["sea"]}" stroke-width="{SEAM:.2f}"/>')
+    # The hit: a cross in the sea's colour cut into the hull, then red over it.
+    cx, cy = X + (HIT[0] + .5) * CELL, Y + (HIT[1] + .5) * CELL
+    a = CELL * .22
+    cross = f"M{cx - a:.2f} {cy - a:.2f}L{cx + a:.2f} {cy + a:.2f}M{cx - a:.2f} {cy + a:.2f}L{cx + a:.2f} {cy - a:.2f}"
+    o.append(f'<path d="{cross}" stroke="{t["sea"]}" stroke-width="{CELL * .3:.2f}" stroke-linecap="round"/>')
+    o.append(f'<path d="{cross}" stroke="{t["hit"]}" stroke-width="{CELL * .15:.2f}" stroke-linecap="round"/>')
+    o.append(f'<rect x="{T + EDGE / 2}" y="{T + EDGE / 2}" width="{w - EDGE}" height="{w - EDGE}" rx="{RX - EDGE / 2}" fill="none" stroke="{t["ink"]}" stroke-width="{EDGE}"/>')
     return "\n".join(o)
 
-# --- the banner: the mark, the name beside it ---
+# --- the banner: the mark, the name beside it, a line under the name ---
 BANNER = {
-    "dark": dict(card=[(0, "#0d2840"), (1, "#050e1a")], edge="#1d4466", grid="#5b8fbf", grid_op=.16,
-                 name="#eef4fa", line="#8fb6da", rule="#24496a"),
-    "light": dict(card=[(0, "#ffffff"), (1, "#e3edf8")], edge="#c3d3e3", grid="#4a6d8e", grid_op=.12,
-                  name="#10263b", line="#4a6d8e", rule="#c3d3e3"),
+    "dark": dict(paper="#0e1b2c", edge="#26394f", name="#e4e8e1", line="#9aa9ba"),
+    "light": dict(paper="#eff1ec", edge="#c4ccd0", name="#13294b", line="#51627a"),
 }
 
 def banner(t, mt):
-    W, H, PAD = 1280, 400, 44
+    W, H, PAD = 1280, 400, 64
     ms = H - 2 * PAD                                   # the mark, square, flush with the padding
-    tx = PAD + ms + 44                                 # where the text column starts
-    right = W - PAD - 12
+    tx = PAD + ms + 56                                 # where the text column starts
     _, w100 = outline("display", "Broadside", 100, 0, 0, "none")
-    size = min(200, (right - tx) / w100 * 100)         # the name fills the column
-    name, _ = outline("display", "Broadside", size, tx, 228, t["name"])
-    line, lw = outline("body", "EXACT BATTLESHIP ENGINE", 24, tx + 4, 296, t["line"], tracking=6)
-    rule_x = tx + 4 + lw + 24
+    size = min(168, (W - PAD - tx) / w100 * 100)       # the name fits the column
+    name, _ = outline("display", "Broadside", size, tx, 214, t["name"])
+    line, _ = outline("text", "An exact Battleship engine", 46, tx + 6, 288, t["line"])
     return "\n".join([
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="Broadside, an exact Battleship engine">',
         "<title>Broadside</title>",
-        f'''<defs>
-  <radialGradient id="card" cx="{PAD + ms / 2}" cy="{H / 2}" r="{W * .8:.0f}" gradientUnits="userSpaceOnUse">{stops(t["card"])}</radialGradient>
-  <pattern id="chart" width="40" height="40" patternUnits="userSpaceOnUse">
-    <path d="M40 0V40M0 40H40" fill="none" stroke="{t["grid"]}" stroke-width="1.2"/>
-  </pattern>
-  <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0"><stop offset=".42" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff"/></linearGradient>
-  <mask id="fademask"><rect width="{W}" height="{H}" fill="url(#fade)"/></mask>
-  <clipPath id="cardclip"><rect width="{W}" height="{H}" rx="28"/></clipPath>
-</defs>''',
-        '<g clip-path="url(#cardclip)">',
-        f'<rect width="{W}" height="{H}" fill="url(#card)"/>',
-        f'<rect width="{W}" height="{H}" fill="url(#chart)" opacity="{t["grid_op"]}" mask="url(#fademask)"/>',
-        "</g>",
-        f'<rect x=".75" y=".75" width="{W - 1.5}" height="{H - 1.5}" rx="27.25" fill="none" stroke="{t["edge"]}" stroke-width="1.5"/>',
+        f'<rect x=".75" y=".75" width="{W - 1.5}" height="{H - 1.5}" rx="27.25" fill="{t["paper"]}" stroke="{t["edge"]}" stroke-width="1.5"/>',
         f'<g transform="translate({PAD} {PAD}) scale({ms / S:.5f})">', mark(mt), "</g>",
         name, line,
-        f'<rect x="{rule_x:.1f}" y="286" width="{right - rule_x:.1f}" height="2" fill="{t["rule"]}"/>',
         "</svg>"]) + "\n"
 
 for name, theme in THEMES.items():
