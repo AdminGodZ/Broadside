@@ -9,7 +9,7 @@ interface Props {
 const { href, class: className } = Astro.props;
 ---
 
-<a href={href} class:list={["with-icon gap-[.4em]", className]} target="_blank" rel="noopener">
+<a href={href} class:list={["with-icon gap-[.4em] no-underline hover:underline", className]} target="_blank" rel="noopener">
   <slot />
   <ExternalLinkIcon class="icon -ml-[.05em] size-[.8em] opacity-75" aria-hidden="true" />
   <span class="sr-only">(opens in a new tab)</span>

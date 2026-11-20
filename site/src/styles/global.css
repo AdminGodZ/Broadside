@@ -71,7 +71,9 @@
     opacity: var(--grain-opacity);
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .07 0 0 0 0 .16 0 0 0 0 .29 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
-  a { text-decoration-thickness: 1px; text-underline-offset: .18em; }
+  /* Tailwind's reset drops the underline; links in running text keep it. Standalone links
+     (navigation, icon links) opt out with no-underline and underline on hover. */
+  a { text-decoration-line: underline; text-decoration-thickness: 1px; text-underline-offset: .18em; }
   a:hover { text-decoration-thickness: 2px; }
   :focus-visible { outline: 2.5px solid var(--color-mark); outline-offset: 3px; border-radius: 2px; }
   code, pre { font-family: var(--font-mono); font-size: .82em; }

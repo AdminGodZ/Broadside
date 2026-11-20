@@ -52,7 +52,9 @@
     const y = Math.min(...ys) * 10;
     const w = (Math.max(...xs) + 1) * 10 - x;
     const h = (Math.max(...ys) + 1) * 10 - y;
-    el("rect", { class: "ship", x: x + 1.6, y: y + 1.6, width: w - 3.2, height: h - 3.2, rx: 3.4 }, layer);
+    // Outline 0.8 inside the cell edges, ends rounded on the end cells' centres: its inner edge stays
+    // 3.9 from a cell's centre, clear of a cross (reach 2.0 * √2 plus the round cap: 3.5).
+    el("rect", { class: "ship", x: x + 0.8, y: y + 0.8, width: w - 1.6, height: h - 1.6, rx: 4.2 }, layer);
   }
 
   function drawShot(layer: Element, cell: number, hit: boolean) {
@@ -63,8 +65,8 @@
       return;
     }
     const g = el("g", { class: "hit" }, layer);
-    el("line", { x1: x - 2.4, y1: y - 2.4, x2: x + 2.4, y2: y + 2.4 }, g);
-    el("line", { x1: x - 2.4, y1: y + 2.4, x2: x + 2.4, y2: y - 2.4 }, g);
+    el("line", { x1: x - 2, y1: y - 2, x2: x + 2, y2: y + 2 }, g);
+    el("line", { x1: x - 2, y1: y + 2, x2: x + 2, y2: y - 2 }, g);
   }
 
   /** Draws `game` up to shot `upto`; returns how many ships are sunk by then. */
