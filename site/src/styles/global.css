@@ -14,18 +14,19 @@
   --rule: #c4ccd0;
   --hit: #c8372d;        /* signal red, for hits only */
   --mark: #e0a100;       /* the latest shot and keyboard focus */
+  --good: #1f7a4d;       /* a win, a ship in place */
   --grain-opacity: .5;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --paper: #0e1b2c; --water: #132439; --ink: #e4e8e1; --ink-soft: #9aa9ba; --rule: #26394f;
-    --hit: #ef5f4c; --mark: #f2bd2c; --grain-opacity: .22; color-scheme: dark;
+    --hit: #ef5f4c; --mark: #f2bd2c; --good: #4cc08a; --grain-opacity: .22; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --paper: #0e1b2c; --water: #132439; --ink: #e4e8e1; --ink-soft: #9aa9ba; --rule: #26394f;
-  --hit: #ef5f4c; --mark: #f2bd2c; --grain-opacity: .22; color-scheme: dark;
+  --hit: #ef5f4c; --mark: #f2bd2c; --good: #4cc08a; --grain-opacity: .22; color-scheme: dark;
 }
 
 @theme inline {
@@ -36,6 +37,7 @@
   --color-rule: var(--rule);
   --color-hit: var(--hit);
   --color-mark: var(--mark);
+  --color-good: var(--good);
   /* --serif (Newsreader) and --stencil (Saira Stencil One) come from the fonts in astro.config.mjs. */
   --font-serif: var(--serif);
   --font-stencil: var(--stencil);

@@ -39,4 +39,4 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run check
       - run: npm run build
-      - run: test -s dist/index.html && test -s dist/play/index.html
+      - run: test -s dist/index.html && test -s dist/play/index.html && test -s dist/broadside.html

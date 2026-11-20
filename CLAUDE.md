@@ -18,4 +18,4 @@ See README.md for the roadmap and reference numbers.
 - `cargo run --release -p broadside -- count`
 - `cargo run --release -p broadside -- compare A B` (paired comparison of two shooters)
 - `cargo clippy --all-targets`
-- `web/build.sh` (browser game: engine as WebAssembly inlined into `web/dist/broadside.html`)
+- `cd site && npm run build` (website and browser game; the engine as WebAssembly, and the game folded into `site/dist/broadside.html` for offline play)

@@ -1,8 +1,8 @@
 #!/bin/sh
-# Builds the browser game (web/build.sh) and puts it in public/play/, where
-# Astro copies it unchanged: the site serves it at /play.
+# Builds the engine as WebAssembly and puts it where the play page imports it
+# (src/components/game/broadside.wasm, not committed). Vite gives it a hashed
+# name, so browsers cache it for good.
 set -e
-cd "$(dirname "$0")/.."
-../web/build.sh
-mkdir -p public/play
-cp ../web/dist/broadside.html public/play/index.html
+cd "$(dirname "$0")/../.."
+cargo build --profile wasm -p broadside-wasm --target wasm32-unknown-unknown
+cp target/wasm32-unknown-unknown/wasm/broadside_wasm.wasm site/src/components/game/broadside.wasm
