@@ -120,7 +120,7 @@ mod tests {
         let (h, v) = starts(2, open);
         let cover = cover_cells(h, v);
         assert_eq!(cover.count_ones(), 49);
-        assert!(Bits(cover).all(|c| (c / SIZE + c % SIZE) % 2 == 0));
+        assert!(Bits(cover).all(|c| (c / SIZE + c % SIZE).is_multiple_of(2)));
     }
 
     #[test]
