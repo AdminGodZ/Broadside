@@ -34,12 +34,13 @@
 **Online:** play at [broadside.admingod.ch](https://broadside.admingod.ch), or download the command-line
 engine for macOS, Windows or Linux from the [latest release](https://github.com/AdminGodZ/Broadside/releases/latest).
 
-**In the browser.** The whole engine compiles to WebAssembly and runs inside one self-contained page,
-no server needed:
+**In the browser.** The whole engine compiles to WebAssembly and runs on your device, no server
+needed. The game is the website's `/play` page; the build also folds it into one self-contained file
+that works offline (the site's *Save it for offline play*):
 
 ```sh
-web/build.sh                  # builds web/dist/broadside.html
-open web/dist/broadside.html
+cd site && npm ci && npm run build   # dist/play/ for the site, dist/broadside.html offline
+open dist/broadside.html
 ```
 
 Place your fleet (or roll a random one), win the coin toss, and fire. The engine learns through the
@@ -254,8 +255,8 @@ crates/
   core/   broadside-core: rules, bitboards, inference, search, placement (pure logic, no I/O)
   cli/    broadside: the command-line front end
   wasm/   broadside-wasm: the engine for the browser, a plain C ABI over WebAssembly
-web/      the browser game (page.html + build.sh → dist/broadside.html)
-site/     the website (Astro): npm run dev / npm run build → dist/, deployed by Vercel (vercel.json)
+site/     the website and the browser game (Astro): npm run dev / npm run build → dist/, deployed
+          by Vercel (vercel.json); the game is src/components/game, dist/broadside.html its offline file
 assets/   logo and banner, light and dark, and charts (make_logo.py, make_charts.py draw them)
 ```
 

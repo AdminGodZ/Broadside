@@ -11,6 +11,7 @@
     "dev": "astro dev",
     "prebuild": "sh scripts/prepare.sh",
     "build": "astro build",
+    "postbuild": "node scripts/offline.mjs",
     "preview": "astro preview",
     "check": "astro check"
   },

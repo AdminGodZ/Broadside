@@ -78,14 +78,23 @@ jobs:
     name: Browser game
     needs: check
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: site/.nvmrc
+          cache: npm
+          cache-dependency-path: site/package-lock.json
       - run: rustup toolchain install
-      - run: web/build.sh
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
       - uses: actions/upload-artifact@v4
         with:
           name: web
-          path: web/dist/broadside.html
+          path: site/dist/broadside.html
           if-no-files-found: error
 
   publish:

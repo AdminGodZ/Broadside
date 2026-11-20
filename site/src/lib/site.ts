@@ -21,4 +21,5 @@ export const SYSTEMS = [
   { id: "linux-arm", name: "Linux, ARM", button: "Download for Linux", kind: "monitor", url: `${LATEST}/broadside-aarch64-unknown-linux-gnu.tar.gz` },
 ] as const;
 
-export const OFFLINE_GAME = `${LATEST}/broadside.html`;
+/** The play page as one self-contained file (scripts/offline.mjs), served by the site itself. */
+export const OFFLINE_GAME = "/broadside.html";

@@ -1,0 +1,211 @@
+---
+// The browser game: you against the engine, which runs here as WebAssembly (game.ts).
+// Two phases share one layout: placing (your chart and the ship dock) and battle
+// (enemy waters and your chart). Layout is Tailwind; the charts, which the script
+// draws, are styled below.
+import Button from "../Button.astro";
+
+const head = "flex items-baseline justify-between gap-3";
+const sub = "text-[.95rem] text-ink-soft tabular-nums";
+const tally = "m-0 flex list-none flex-wrap gap-x-3.5 gap-y-1.5 p-0 text-[.95rem] text-ink-soft";
+---
+
+<div class="game pb-4">
+  <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 pt-7 pb-6 lg:min-h-[116px]">
+    <p id="msg" class="m-0 text-[1.35rem] leading-snug font-medium" aria-live="polite">Loading the engine…</p>
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+      <dl class="m-0 flex gap-5 text-[.95rem] text-ink-soft" aria-label="This session">
+        <div class="flex items-baseline gap-1.5"><dt>you</dt><dd id="rec-w" class="-order-1 m-0 text-lg font-semibold text-ink tabular-nums">0</dd></div>
+        <div class="flex items-baseline gap-1.5"><dt>engine</dt><dd id="rec-l" class="-order-1 m-0 text-lg font-semibold text-ink tabular-nums">0</dd></div>
+        <div class="flex items-baseline gap-1.5"><dt>shots per win</dt><dd id="rec-avg" class="-order-1 m-0 text-lg font-semibold text-ink tabular-nums">–</dd></div>
+      </dl>
+      <Button id="resign" hidden class="px-[18px] py-[11px] text-base">Resign</Button>
+      <Button id="new-game" primary hidden class="px-[18px] py-[11px] text-base">New game</Button>
+    </div>
+  </div>
+
+  <div id="banner" class="mb-6 grid gap-1.5 rounded-md border-[1.5px] border-ink px-5 py-[18px]" hidden></div>
+
+  <div class="boards grid grid-cols-1 items-start gap-x-12 gap-y-9 lg:grid-cols-2">
+    <section class="grid min-w-0 gap-3.5" id="target-col" aria-labelledby="target-title" hidden>
+      <div class={head}><h2 id="target-title" class="m-0 text-[1.35rem]">Enemy waters</h2><span id="you-shots" class={sub}></span></div>
+      <div class="chart target" id="target"></div>
+      <ul class={tally} id="enemy-fleet" aria-label="The engine's ships"></ul>
+    </section>
+    <section class="grid min-w-0 gap-3.5" id="home-col" aria-labelledby="home-title">
+      <div class={head}><h2 id="home-title" class="m-0 text-[1.35rem]">Your fleet</h2><span id="it-shots" class={sub}></span></div>
+      <div class="chart" id="home"></div>
+      <ul class={tally} id="my-fleet" aria-label="Your ships" hidden></ul>
+      <div class="flex flex-wrap items-center gap-2.5" id="heat-toggle" hidden>
+        <label class="inline-flex cursor-pointer items-center gap-2 text-[.95rem] text-ink-soft">
+          <input type="checkbox" id="heat" /> Show where the engine expects your ships
+        </label>
+        <span class="heat-scale inline-flex items-center gap-2 text-sm text-ink-soft" id="heat-scale" aria-hidden="true" hidden>0%<i></i>100%</span>
+      </div>
+    </section>
+    <aside class="grid content-start gap-[18px]" id="dock" aria-label="Ships to place" hidden>
+      <ol class="m-0 grid list-none gap-2 p-0" id="dock-ships"></ol>
+      <div class="flex flex-wrap items-center gap-2.5">
+        <div class="seg inline-flex overflow-hidden rounded border border-ink" role="group" aria-label="Direction">
+          <button type="button" id="dir-h" aria-pressed="true">Across</button>
+          <button type="button" id="dir-v" aria-pressed="false">Down</button>
+        </div>
+        <kbd class="keys-only rounded border border-b-2 border-rule px-1.5 py-px font-mono text-xs text-ink-soft" title="Press R to turn the ship">R</kbd>
+        <div class="ml-auto flex gap-2.5">
+          <Button id="random" class="px-[18px] py-[11px] text-base">Random</Button>
+          <Button id="clear" class="px-[18px] py-[11px] text-base">Clear</Button>
+        </div>
+      </div>
+      <p class="m-0 text-[.95rem] text-ink-soft" id="dock-hint"></p>
+      <Button id="start" primary class="w-full justify-center py-4 text-lg">Start battle</Button>
+    </aside>
+  </div>
+
+  <section class="mt-9" id="log-box" aria-labelledby="log-title" hidden>
+    <h2 id="log-title" class="m-0 mb-2.5 text-[1.05rem]">Battle log</h2>
+    <ol class="log m-0 flex list-none flex-wrap gap-1.5 p-0" id="log"></ol>
+  </section>
+
+  <details class="mt-9 max-w-[72ch] border-t border-rule pt-3.5 text-[.95rem] text-ink-soft">
+    <summary class="w-max cursor-pointer text-ink">Rules</summary>
+    <p class="mt-2.5">
+      Standard fleet on a 10×10 chart: Carrier 5, Battleship 4, Cruiser 3, Submarine 3, Destroyer 2. Ships may touch but
+      not overlap. A hit does not say which ship it struck; you hear which one when it sinks. You and the engine take
+      turns, one shot each, and whoever sinks the other fleet first wins.
+    </p>
+    <p class="mt-2.5">
+      The engine keeps learning through this session: where you like to hide ships, whether you keep them apart or let
+      them touch, and which waters you search last. Reloading the page resets it.
+    </p>
+  </details>
+</div>
+
+<script>
+  import { start } from "./game";
+  start();
+</script>
+
+<style is:global>
+  /* Charts. Grid lines are drawn on the sea, ships on a layer above them, and the
+     cells (buttons, transparent) above both, carrying shots and the cursor. */
+  .game .chart {
+    display: grid; grid-template-columns: 1.6em repeat(10, minmax(0, 1fr));
+    width: 100%; max-width: 480px; user-select: none; touch-action: manipulation;
+  }
+  .game .axis { display: grid; place-items: center; font-size: .8rem; color: var(--color-ink-soft); padding: 2px 0 4px; }
+  .game .sea {
+    grid-column: 2 / -1; grid-row: 2 / span 10; position: relative; container-type: inline-size;
+    display: grid; grid-template-columns: repeat(10, minmax(0, 1fr));
+    border: 1.5px solid var(--color-ink); border-radius: 3px; background-color: var(--color-water);
+    background-image: linear-gradient(to right, var(--color-rule) 1px, transparent 1px), linear-gradient(to bottom, var(--color-rule) 1px, transparent 1px);
+    background-size: 10% 10%; background-position: -1px -1px;
+  }
+  .game .layer { position: absolute; inset: 0; pointer-events: none; }
+  .game.battle #target-col { order: -1; } /* in battle, enemy waters come first */
+  .game .cell {
+    aspect-ratio: 1; position: relative; z-index: 1; display: grid; place-items: center;
+    padding: 0; border: 0; border-radius: 0; background: transparent; cursor: default;
+  }
+  .game .cell:focus-visible { outline-offset: -3px; }
+  /* Browsers show the focus ring after any key press, so R (turn) after a click would ring
+     the clicked cell. Rings show only while navigating by keyboard (html.kbd, from game.ts). */
+  html:not(.kbd) .game :focus-visible { outline: none; }
+
+  /* Ships: a rounded hull inset in its cells (1cqw is a tenth of a cell). */
+  .game .hull { position: absolute; }
+  .game .hull::before {
+    content: ""; position: absolute; inset: 1.1cqw; border-radius: 4cqw;
+    background: color-mix(in oklab, var(--color-ink) 20%, transparent); border: 1.5px solid var(--color-ink);
+  }
+  .game .hull.sunk::before { background: color-mix(in oklab, var(--color-hit) 22%, transparent); border-color: var(--color-hit); }
+  .game .hull.reveal::before { background: transparent; border: 1.5px dashed var(--color-ink-soft); }
+  .game .hull.lifted::before { background: transparent; border: 1.5px dashed var(--color-ink-soft); opacity: .7; }
+  .game .hull.ghost::before { background: color-mix(in oklab, var(--color-mark) 28%, transparent); border: 2px solid var(--color-mark); }
+  .game .hull.ghost.bad::before { background: color-mix(in oklab, var(--color-hit) 22%, transparent); border: 2px dashed var(--color-hit); }
+  .game .hull.movable::before { transition: background-color .12s; }
+  .game .hull.hover::before { background: color-mix(in oklab, var(--color-mark) 22%, transparent); border-color: var(--color-mark); }
+  @media (prefers-reduced-motion: no-preference) {
+    .game .hull.fresh::before { animation: game-drop .32s ease-out; }
+    @keyframes game-drop { from { transform: scale(1.12); background: color-mix(in oklab, var(--color-mark) 45%, transparent); } }
+  }
+
+  /* Shots: a dot for a miss, a cross for a hit, a ring around the latest shot. */
+  .game .cell.miss::after { content: ""; width: 22%; aspect-ratio: 1; border-radius: 50%; background: var(--color-ink); }
+  .game .cell.hit::before, .game .cell.hit::after {
+    content: ""; position: absolute; z-index: 1; width: 48%; height: 11%; border-radius: 99px; background: var(--color-hit);
+    left: 26%; top: 44.5%; transform: rotate(45deg);
+  }
+  .game .cell.hit::after { transform: rotate(-45deg); }
+  .game .cell.sinker { box-shadow: inset 0 0 0 2px var(--color-hit); border-radius: 4cqw; }
+  .game .ring { position: absolute; inset: 9%; border: 2px solid var(--color-mark); border-radius: 50%; z-index: 2; }
+  .game.placing #home .cell { cursor: pointer; }
+  .game .target .cell.open { cursor: crosshair; }
+  .game .target .cell.open:hover { background: color-mix(in oklab, var(--color-mark) 30%, transparent); }
+  @media (prefers-reduced-motion: no-preference) {
+    .game .cell.fresh::after, .game .cell.fresh::before { animation: game-splash .35s ease-out; }
+    @keyframes game-splash { from { scale: 2; opacity: 0; } }
+  }
+
+  /* Heat: the chance the engine gives each cell of holding a ship, shaded linearly
+     (opacity .85 at certainty), the exact figure on hover. */
+  .game .heat { position: absolute; inset: 0; background: var(--color-mark); pointer-events: none; z-index: 0; }
+  .game .pct {
+    position: absolute; bottom: calc(100% + 6px); left: 50%; translate: -50% 0; z-index: 5; pointer-events: none;
+    background: var(--color-ink); color: var(--color-paper); font-size: .85rem; line-height: 1; padding: 6px 8px; border-radius: 4px;
+    white-space: nowrap; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .1s;
+  }
+  .game .cell:hover .pct { opacity: 1; }
+  .game .heat-scale i {
+    display: block; width: 96px; height: 10px; border-radius: 3px; border: 1px solid var(--color-rule);
+    background: linear-gradient(to right, var(--color-water), color-mix(in oklab, var(--color-mark) 85%, var(--color-water)));
+  }
+
+  /* Fleet tallies under the charts during battle. */
+  .game .tally-ship { display: inline-flex; align-items: center; gap: 7px; }
+  .game .tally-ship.down { text-decoration: line-through; opacity: .6; }
+  .game .pips { display: inline-flex; gap: 2px; }
+  .game .pips i { display: block; width: 8px; height: 8px; border-radius: 2px; background: var(--color-ink-soft); }
+  .game .down .pips i { background: var(--color-hit); }
+
+  /* The dock: every ship, where it is, and the one in hand. */
+  .game .ship-row {
+    width: 100%; display: grid; grid-template-columns: 7.2em 1fr auto; align-items: center; gap: 14px;
+    padding: 12px 14px; border: 1px solid var(--color-rule); border-radius: 6px; background: transparent;
+    text-align: left; cursor: pointer; transition: border-color .12s, background-color .12s;
+  }
+  .game .ship-row:hover { border-color: var(--color-ink-soft); }
+  .game .ship-row .shape { display: flex; gap: 3px; }
+  .game .ship-row .shape i { display: block; width: 1.1em; height: 1.1em; border-radius: 3px; border: 1.5px solid var(--color-ink-soft); }
+  .game .ship-row .name { font-weight: 500; }
+  .game .ship-row .name small { display: block; font-size: .9rem; font-weight: 400; color: var(--color-ink-soft); }
+  .game .ship-row .where { font-size: .95rem; color: var(--color-ink-soft); font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px; }
+  .game .ship-row.placed .shape i { background: color-mix(in oklab, var(--color-ink) 20%, transparent); border-color: var(--color-ink); }
+  .game .ship-row.placed .where { color: var(--color-good); }
+  .game .ship-row.placed .where::before { content: "✓"; font-weight: 600; }
+  .game .ship-row.sel { border-color: var(--color-mark); background: color-mix(in oklab, var(--color-mark) 12%, transparent); box-shadow: 0 0 0 1px var(--color-mark); }
+  .game .ship-row.sel .shape i { border-color: var(--color-mark); background: color-mix(in oklab, var(--color-mark) 30%, transparent); }
+  .game .ship-row.sel .where { color: var(--color-ink); }
+  .game .ship-row.sel .where::before { content: none; }
+  @media (max-width: 859px) {
+    .game .ship-row { grid-template-columns: 5em 1fr auto; padding: 8px 12px; gap: 10px; }
+    .game .ship-row .shape { gap: 2px; }
+    .game .ship-row .shape i { width: .8em; height: .8em; border-radius: 2px; }
+    .game .ship-row .name small { display: inline; margin-left: 6px; }
+  }
+  .game .seg button { border: 0; padding: 10px 14px; background: transparent; cursor: pointer; font: 500 .95rem/1 var(--font-serif); color: var(--color-ink); }
+  .game .seg button + button { border-left: 1px solid var(--color-ink); }
+  .game .seg button[aria-pressed="true"] { background: var(--color-ink); color: var(--color-paper); }
+  @media (hover: none) { .game .keys-only { display: none; } }
+
+  /* Game over and the log. */
+  .game #banner h3 { margin: 0; font-size: 1.6rem; }
+  .game #banner.win h3 { color: var(--color-good); }
+  .game #banner.lose h3 { color: var(--color-hit); }
+  .game #banner p { margin: 0; color: var(--color-ink-soft); }
+  .game .log li { font-size: .9rem; padding: 3px 9px; border-radius: 4px; background: var(--color-water); font-variant-numeric: tabular-nums; border-left: 3px solid var(--color-rule); }
+  .game .log li.you { border-left-color: var(--color-mark); }
+  .game .log li.h { color: var(--color-hit); }
+  .game .log li.s { color: var(--color-paper); background: var(--color-hit); }
+  .game .msg-sub { display: block; font-size: 1rem; font-weight: 400; color: var(--color-ink-soft); }
+  .game .error { border: 1.5px solid var(--color-hit); border-radius: 6px; padding: 12px 14px; }
+</style>

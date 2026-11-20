@@ -17,7 +17,6 @@
   type Game = { ships: number[][]; shots: number[] };
 
   const SVG = "http://www.w3.org/2000/svg";
-  const SHIP_NAMES = ["Carrier", "Battleship", "Cruiser", "Submarine", "Destroyer"];
   const SHOT_MS = 420; // time between shots
   const HOLD_MS = 3200; // how long a finished game stays on the board
 
@@ -69,31 +68,14 @@
     el("line", { x1: x - 2, y1: y + 2, x2: x + 2, y2: y - 2 }, g);
   }
 
-  /** Draws `game` up to shot `upto`; returns how many ships are sunk by then. */
+  /** Draws `game` up to shot `upto`: its shots, and the ships sunk by then. */
   function render(layers: { ships: Element; shots: Element }, game: Game, upto = game.shots.length) {
     layers.ships.replaceChildren();
     layers.shots.replaceChildren();
     const fired = new Set(game.shots.slice(0, upto));
     const occupied = new Set(game.ships.flat());
-    let sunk = 0;
-    for (const cells of game.ships) {
-      if (cells.every((c) => fired.has(c))) {
-        drawShip(layers.ships, cells);
-        sunk++;
-      }
-    }
+    for (const cells of game.ships) if (cells.every((c) => fired.has(c))) drawShip(layers.ships, cells);
     for (const c of game.shots.slice(0, upto)) drawShot(layers.shots, c, occupied.has(c));
-    return sunk;
-  }
-
-  function statusText(game: Game, i: number, sunk: number) {
-    if (sunk === game.ships.length) return `Fleet sunk in ${i} shots`;
-    const cell = game.shots[i - 1];
-    const ship = game.ships.findIndex((cells) => cells.includes(cell));
-    const fired = new Set(game.shots.slice(0, i));
-    if (ship >= 0 && game.ships[ship].every((c) => fired.has(c))) return `Shot ${i}: ${SHIP_NAMES[ship]} sunk`;
-    if (sunk === 0) return `Shot ${i}`;
-    return `Shot ${i}, ${sunk} ${sunk === 1 ? "ship" : "ships"} sunk`;
   }
 
   const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -107,7 +89,7 @@
 
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
       render(layers, all[0]);
-      status.textContent = `Fleet sunk in ${all[0].shots.length} shots`;
+      status.textContent = `Shot ${all[0].shots.length}`;
       return;
     }
 
@@ -127,10 +109,10 @@
       for (let i = 1; i <= game.shots.length; i++) {
         await wait(SHOT_MS);
         await whileVisible();
-        const sunk = render(layers, game, i);
+        render(layers, game, i);
         const cell = game.shots[i - 1];
         el("circle", { class: "latest", cx: cx(cell), cy: cy(cell), r: 4 }, layers.shots);
-        status.textContent = statusText(game, i, sunk);
+        status.textContent = `Shot ${i}`; // the count only, not which ships are down
       }
       await wait(HOLD_MS);
       layers.ships.classList.add("fading");
