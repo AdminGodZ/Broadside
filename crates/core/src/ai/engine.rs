@@ -13,6 +13,7 @@ use super::Shooter;
 use super::habits::{self, Habits, KINDS, Mix};
 use super::last;
 use super::placement::Tilt;
+use super::repeats::{Repeats, SlotWeights};
 use super::search::{self, Tree};
 use crate::bitboard::{Bits, CELLS};
 use crate::fleet::{FLEET_CELLS, LENGTHS, SEGMENTS, SHIPS, Ship, THROUGH};
@@ -20,6 +21,40 @@ use crate::game::{Knowledge, Layout, Outcome};
 use crate::posterior::Posterior;
 use crate::rng::Rng;
 use std::sync::Arc;
+
+/// What the shooter expects of the opponent's placement beyond the rules:
+/// habits per cell, habits per ship and placement, or both.
+#[derive(Clone, Copy, Default)]
+pub struct Prior<'a> {
+    /// P(layout) ∝ Π e^θ over its cells.
+    pub tilt: Option<&'a Tilt>,
+    /// ln weight of each ship at each slot.
+    pub slots: Option<&'a SlotWeights>,
+}
+
+impl Prior<'_> {
+    pub const NONE: Prior<'static> = Prior {
+        tilt: None,
+        slots: None,
+    };
+
+    pub fn is_none(&self) -> bool {
+        self.tilt.is_none() && self.slots.is_none()
+    }
+
+    /// ln weight of `ship` at `slot` when `unknown` are the unshot cells.
+    /// Of the tilt only the unshot cells count: every consistent layout
+    /// holds all the hit cells, so their weight says nothing.
+    #[inline]
+    pub fn ln_weight(&self, ship: usize, slot: usize, unknown: u128) -> f64 {
+        let cells = self.tilt.map_or(0.0, |t| {
+            Bits(SEGMENTS[LENGTHS[ship]][slot] & unknown)
+                .map(|c| t.theta[c])
+                .sum()
+        });
+        cells + self.slots.map_or(0.0, |w| w[ship][slot])
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Search {
@@ -52,6 +87,10 @@ pub struct Search {
     /// How far, in tenths of a shot, the opponent may stray from the
     /// rollouts' estimate.
     pub spread: usize,
+    /// EXPERIMENT: lines of play in the search hunt on a smallest cover of
+    /// the Destroyer's places, in positions of at least this many
+    /// placements (0 = never).
+    pub rollout_cover: usize,
 }
 
 pub struct Broadside {
@@ -67,6 +106,9 @@ pub struct Broadside {
     /// What the opponent is believed to do about spacing its ships; learns
     /// from its fleets while `learner` is set.
     pub habits: Habits,
+    /// Whether the opponent puts ships back where they lay before; learns
+    /// from its fleets while `learner` is set.
+    pub repeats: Repeats,
     /// EXPERIMENT: weight of a ship's chance on a cell, by ship.
     pub hunt: [f64; SHIPS],
     /// EXPERIMENT: weights apply only while no hit is unexplained.
@@ -200,11 +242,13 @@ impl Broadside {
                 last_nodes: 2_000,
                 race: 0,
                 spread: 15,
+                rollout_cover: 0,
             },
             prior: None,
             learner: Some(Learner::default()),
             race: None,
             habits: Habits::neutral(),
+            repeats: Repeats::new(),
             hunt: [1.0; SHIPS],
             hunt_only: false,
             parity: 0,
@@ -217,15 +261,19 @@ impl Broadside {
     /// everything it has learned about the opponent (0 for shot cells).
     pub fn chances(&self, k: &Knowledge) -> [f64; CELLS] {
         let p = Posterior::cached(k, self.threads);
-        let prior = self.prior.as_deref();
+        let slots = self.repeats.weights();
+        let prior = Prior {
+            tilt: self.prior.as_deref(),
+            slots: slots.as_deref(),
+        };
         let mix = self
             .spacing()
             .and_then(|kinds| Mix::new(k, &p, &kinds, self.threads));
         // Scores are chances under a prior, weights of layouts without.
-        let (scores, total) = match (&mix, prior) {
+        let (scores, total) = match (&mix, prior.is_none()) {
             (Some(m), _) => (m.scores(prior, k), m.weight()),
-            (None, Some(_)) => (cell_scores(&p, prior, k), 1.0),
-            (None, None) => (cell_scores(&p, None, k), p.layouts as f64),
+            (None, false) => (cell_scores(&p, prior, k), 1.0),
+            (None, true) => (cell_scores(&p, prior, k), p.layouts as f64),
         };
         let unknown = k.unknown();
         let mut out = [0.0; CELLS];
@@ -286,19 +334,15 @@ pub fn occupied_outcomes(k: &Knowledge, cell: usize) -> Vec<Outcome> {
 /// (a product-of-experts approximation: exact constraints, approximate
 /// prior). Only a placement's unshot cells count: every consistent layout
 /// holds all the hit cells, so their weight says nothing.
-pub fn cell_scores(p: &Posterior, prior: Option<&Tilt>, k: &Knowledge) -> [f64; CELLS] {
-    let Some(t) = prior else {
+pub fn cell_scores(p: &Posterior, prior: Prior, k: &Knowledge) -> [f64; CELLS] {
+    if prior.is_none() {
         return p.cells.map(|c| c as f64);
-    };
+    }
     let unknown = k.unknown().0;
     let mut out = [0.0; CELLS];
     for ship in Bits(k.afloat_mask() as u128) {
         let (len, w) = (LENGTHS[ship], &p.ships[ship]);
-        let log = |slot: usize| -> f64 {
-            Bits(SEGMENTS[len][slot] & unknown)
-                .map(|c| t.theta[c])
-                .sum()
-        };
+        let log = |slot: usize| prior.ln_weight(ship, slot, unknown);
         let live = || (0..w.len()).filter(|&slot| w[slot] > 0);
         let top = live().map(log).fold(f64::NEG_INFINITY, f64::max);
         let z: f64 = live()
@@ -363,7 +407,7 @@ fn certain_cells(p: &Posterior, k: &Knowledge) -> (u128, Option<usize>) {
 #[cfg(test)]
 /// The base policy's shot: a cell one ship certainly holds, else a certain
 /// hit, else the likeliest cell; lowest cell on ties.
-fn base_move(k: &Knowledge, p: &Posterior, prior: Option<&Tilt>) -> usize {
+fn base_move(k: &Knowledge, p: &Posterior, prior: Prior) -> usize {
     let (certain, forced) = certain_cells(p, k);
     if let Some(c) = forced {
         return c;
@@ -385,7 +429,7 @@ pub(crate) fn rollout(
     k: &Knowledge,
     first: usize,
     truth: &[Option<u8>; SHIPS],
-    prior: Option<&Tilt>,
+    prior: Prior,
     seen: &mut BaseMoves,
 ) -> u32 {
     let ships: Vec<(usize, u128)> = (0..SHIPS)
@@ -420,7 +464,8 @@ fn opponent_rollout(fleet: &Layout, k: &Knowledge, rng: &mut Rng) -> usize {
         let p = Posterior::cached(&k, 1);
         let (certain, forced) = certain_cells(&p, &k);
         let pool = if certain != 0 { certain } else { k.unknown().0 };
-        let cell = forced.unwrap_or_else(|| best_random(pool, &cell_scores(&p, None, &k), rng));
+        let cell =
+            forced.unwrap_or_else(|| best_random(pool, &cell_scores(&p, Prior::NONE, &k), rng));
         let outcome = match fleet.ship_at(cell) {
             None => Outcome::Miss,
             Some(s) if fleet.ship(s).0 & !(k.hits.0 | 1 << cell) == 0 => Outcome::Sunk(s),
@@ -483,6 +528,7 @@ impl Shooter for Broadside {
         if let Some(l) = self.learner.as_mut() {
             self.prior = l.observe(layout);
             self.habits.observe(layout.contact());
+            self.repeats.observe(layout);
         }
     }
 
@@ -518,7 +564,11 @@ impl Shooter for Broadside {
         if let Some(c) = forced {
             return c;
         }
-        let prior = self.prior.as_deref();
+        let slots = self.repeats.weights();
+        let prior = Prior {
+            tilt: self.prior.as_deref(),
+            slots: slots.as_deref(),
+        };
         let s = self.search;
         // One ship left and no hit on it: every placement in the unshot
         // cells is as likely as any other, and the best order to try them
@@ -571,7 +621,12 @@ impl Shooter for Broadside {
         }
         // Greedy takes a certain hit before anything else.
         let mut pool = if certain != 0 { certain } else { unknown };
-        if self.cover > 0.0 && certain == 0 && mix.is_none() && prior.is_none() && k.sunk[4].is_none() {
+        if self.cover > 0.0
+            && certain == 0
+            && mix.is_none()
+            && prior.is_none()
+            && k.sunk[4].is_none()
+        {
             let sunk_len: u32 = (0..SHIPS)
                 .filter(|&s| k.sunk[s].is_some())
                 .map(|s| LENGTHS[s] as u32)
@@ -580,15 +635,21 @@ impl Shooter for Broadside {
             if hunting || (self.cover_target && self.cover < 10.0) {
                 let (mut across, mut down) = (0u128, 0u128);
                 for c in Bits(unknown) {
-                    if p.ships[4][2 * c] > 0 && unknown >> (c + 1) & 1 == 1 { across |= 1 << c; }
-                    if p.ships[4][2 * c + 1] > 0 && unknown >> (c + 10) & 1 == 1 { down |= 1 << c; }
+                    if p.ships[4][2 * c] > 0 && unknown >> (c + 1) & 1 == 1 {
+                        across |= 1 << c;
+                    }
+                    if p.ships[4][2 * c + 1] > 0 && unknown >> (c + 10) & 1 == 1 {
+                        down |= 1 << c;
+                    }
                 }
                 let cover = super::cover::cover_cells(across, down);
                 if cover != 0 {
                     if self.cover >= 10.0 {
                         pool = cover;
                     } else {
-                        for c in Bits(cover) { scores[c] *= 1.0 + self.cover; }
+                        for c in Bits(cover) {
+                            scores[c] *= 1.0 + self.cover;
+                        }
                     }
                 }
             }
@@ -598,7 +659,11 @@ impl Shooter for Broadside {
                 .filter(|&s| k.sunk[s].is_some())
                 .map(|s| LENGTHS[s] as u32)
                 .sum();
-            let smallest = (0..SHIPS).filter(|&s| k.sunk[s].is_none()).map(|s| LENGTHS[s]).min().unwrap();
+            let smallest = (0..SHIPS)
+                .filter(|&s| k.sunk[s].is_none())
+                .map(|s| LENGTHS[s])
+                .min()
+                .unwrap();
             if k.hits.count() == sunk_len && (smallest == 2 || self.parity == 2) {
                 // The colour class holding the most weight of the smallest ships.
                 let by_ship = p.ship_cells();
@@ -608,16 +673,28 @@ impl Shooter for Broadside {
                     let mut w = 0.0;
                     for c in Bits(unknown) {
                         if (c / 10 + c % 10) % smallest == col {
-                            let v: u64 = (0..SHIPS).filter(|&s| k.sunk[s].is_none() && LENGTHS[s] == smallest).map(|s| by_ship[s][c]).sum();
-                            if v > 0 { m |= 1 << c; w += v as f64; }
+                            let v: u64 = (0..SHIPS)
+                                .filter(|&s| k.sunk[s].is_none() && LENGTHS[s] == smallest)
+                                .map(|s| by_ship[s][c])
+                                .sum();
+                            if v > 0 {
+                                m |= 1 << c;
+                                w += v as f64;
+                            }
                         }
                     }
                     // Stick with the colour most shot already: fewest unshot cells per weight.
-                    let shot = Bits(k.shots().0).filter(|&c| (c / 10 + c % 10) % smallest == col).count() as f64;
+                    let shot = Bits(k.shots().0)
+                        .filter(|&c| (c / 10 + c % 10) % smallest == col)
+                        .count() as f64;
                     let key = shot * 1e6 + w / p.layouts as f64;
-                    if m != 0 && key > best.0 { best = (key, m); }
+                    if m != 0 && key > best.0 {
+                        best = (key, m);
+                    }
                 }
-                if best.1 != 0 { pool = best.1; }
+                if best.1 != 0 {
+                    pool = best.1;
+                }
             }
         }
         let sample = mix.is_none() && s.samples >= 2;

@@ -14,8 +14,7 @@
 //! weights by itself. A belief in spaced fleets that the hits contradict
 //! simply drops out of the mix.
 
-use super::engine::cell_scores;
-use super::placement::Tilt;
+use super::engine::{Prior, cell_scores};
 use super::search::{self, World};
 use crate::bitboard::CELLS;
 use crate::fleet::SHIPS;
@@ -208,7 +207,7 @@ impl Mix {
     }
 
     /// How much each unshot cell is worth shooting (see `cell_scores`).
-    pub fn scores(&self, prior: Option<&Tilt>, k: &Knowledge) -> [f64; CELLS] {
+    pub fn scores(&self, prior: Prior, k: &Knowledge) -> [f64; CELLS] {
         let mut out = [0.0; CELLS];
         for kind in 0..KINDS {
             let p = Self::kind(&self.nested, kind);
@@ -217,9 +216,10 @@ impl Mix {
             }
             // Without a prior the scores are layout counts; with one, they
             // are chances within the kind.
-            let scale = match prior {
-                None => self.density[kind],
-                Some(_) => self.density[kind] * p.layouts as f64,
+            let scale = if prior.is_none() {
+                self.density[kind]
+            } else {
+                self.density[kind] * p.layouts as f64
             };
             for (o, s) in out.iter_mut().zip(cell_scores(&p, prior, k)) {
                 *o += scale * s;
@@ -230,7 +230,7 @@ impl Mix {
 
     /// Every world the belief allows, weighted by it, or `None` if there are
     /// more than `limit`.
-    pub fn worlds(&self, k: &Knowledge, limit: usize, prior: Option<&Tilt>) -> Option<Vec<World>> {
+    pub fn worlds(&self, k: &Knowledge, limit: usize, prior: Prior) -> Option<Vec<World>> {
         // The spacings from the widest the belief allows inward: each
         // one's placements contain the next one's, in the same order.
         let widest = (0..KINDS)
@@ -327,12 +327,12 @@ mod tests {
             let p = Posterior::compute(&k);
             let mix = Mix::new(&k, &p, &neutral(), 1).unwrap();
             assert_eq!(mix.support.cells, p.cells);
-            for (a, b) in mix.scores(None, &k).iter().zip(p.cells) {
+            for (a, b) in mix.scores(Prior::NONE, &k).iter().zip(p.cells) {
                 assert!((a - b as f64).abs() <= 1e-9 * b as f64);
             }
             let (Some(a), Some(b)) = (
-                mix.worlds(&k, 3000, None),
-                search::worlds(&k, &p, 3000, None),
+                mix.worlds(&k, 3000, Prior::NONE),
+                search::worlds(&k, &p, 3000, Prior::NONE),
             ) else {
                 continue;
             };
@@ -370,11 +370,11 @@ mod tests {
                 let Some(mix) = Mix::new(&k, &p, kinds, 1) else {
                     continue;
                 };
-                let Some(worlds) = mix.worlds(&k, 3000, None) else {
+                let Some(worlds) = mix.worlds(&k, 3000, Prior::NONE) else {
                     continue;
                 };
                 // Cell by cell, the worlds add up to the exact counts.
-                let scores = mix.scores(None, &k);
+                let scores = mix.scores(Prior::NONE, &k);
                 let mut occ = [0.0; CELLS];
                 for w in &worlds {
                     for c in Bits(w.all & k.unknown().0) {

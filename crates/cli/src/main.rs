@@ -226,8 +226,7 @@ fn cmd_compare(o: &Opts) -> Result<(), String> {
             .collect();
         let n = d.len() as f64;
         let mean = d.iter().sum::<f64>() / n;
-        let sd =
-            (d.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
+        let sd = (d.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
         let (se, wins) = (sd / n.sqrt(), |f: fn(f64) -> bool| {
             d.iter().filter(|&&x| f(x)).count()
         });

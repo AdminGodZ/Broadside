@@ -6,6 +6,7 @@ pub mod engine;
 pub mod habits;
 pub mod last;
 pub mod placement;
+pub mod repeats;
 pub mod search;
 mod tilts;
 
@@ -120,6 +121,27 @@ impl Placer for SwapPlacer {
     }
 }
 
+/// Keeps a fleet for `every` games, then draws a new one: the player who
+/// leaves the ships where they were (0 = for good).
+pub struct RepeatPlacer {
+    pub every: u32,
+    placed: u32,
+    fleet: Option<Layout>,
+}
+
+impl Placer for RepeatPlacer {
+    fn name(&self) -> String {
+        format!("repeat{}", self.every)
+    }
+    fn place(&mut self, rng: &mut Rng) -> Layout {
+        if self.every > 0 && self.placed.is_multiple_of(self.every) {
+            self.fleet = None;
+        }
+        self.placed += 1;
+        *self.fleet.get_or_insert_with(|| Layout::random(rng))
+    }
+}
+
 /// Places against what the engine has learned: it keeps the engine's own
 /// belief from the fleets shown so far and picks the kind of fleet the engine
 /// now finds least likely, compared with uniform placement. The worst
@@ -181,6 +203,7 @@ pub const PLACERS: &[&str] = &[
     "spaced",
     "clumped",
     "swapN (spaced and clumped in turn, N games each)",
+    "repeat, repeatN (the same fleet every game, or for N games at a time)",
     "contrary (the kind of fleet the engine expects least; contraryN against weight=N)",
     "tiltA (e.g. tilt1.5)",
     "mix:A=P,A=P,...",
@@ -224,6 +247,8 @@ fn engine(name: &str) -> Option<engine::Broadside> {
             "corners" => corners = Some(v as f64 / 100.0),
             // How many tenths of a revealed fleet that belief counts for.
             "weight" => e.habits.games = v as f64 / 10.0,
+            // Belief that the opponent repeats fleets, in thousandths.
+            "repeats" => e.repeats.prior = (v as f64 / 1000.0).min(0.999),
             "exact" => s.exact_limit = v,
             "cands" => s.candidates = v,
             "solve" => s.solve_worlds = v,
@@ -234,6 +259,7 @@ fn engine(name: &str) -> Option<engine::Broadside> {
             "last" => s.last_nodes = v as u64,
             "race" => s.race = v,
             "spread" => s.spread = v,
+            "rcov" => s.rollout_cover = v,
             _ => return None,
         }
     }
@@ -295,11 +321,22 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
             let tenths: u32 = n[8..].parse().ok().filter(|&n| n > 0)?;
             Box::new(ContraryPlacer::new(tenths as f64 / 10.0))
         }
+        "repeat" => Box::new(RepeatPlacer {
+            every: 0,
+            placed: 0,
+            fleet: None,
+        }),
+        n if n.starts_with("repeat") => Box::new(RepeatPlacer {
+            every: n[6..].parse().ok().filter(|&n| n > 0)?,
+            placed: 0,
+            fleet: None,
+        }),
         n if n.starts_with("swap") => Box::new(SwapPlacer {
             every: n[4..].parse().ok().filter(|&n| n > 0)?,
             placed: 0,
         }),
         "broadside" => Box::new(placement::AdaptivePlacer::new()),
+        "lateness" => Box::new(placement::LatenessPlacer::new()),
         "equilibrium" => Box::new(placement::MixedPlacer::equilibrium()),
         n if n.starts_with("mix:") => {
             let parts: Vec<(f64, f64)> = n[4..]
