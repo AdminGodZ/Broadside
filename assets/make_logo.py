@@ -1,5 +1,5 @@
 # Generates the Broadside logo in the website's look, each in a dark and a light theme:
-#   assets/logo-{dark,light}.svg     the mark: the B of the name on a patch of chart, with a hit on it
+#   assets/logo-{dark,light}.svg     the mark: a patch of chart with a B laid out as a fleet, one ship hit
 #   assets/banner-{dark,light}.svg   the mark with the name and a line under it, for the README
 # Flat, in the site's colours (navy ink on chart paper; light and dark as on the site). The name is
 # set in Saira Stencil One, the line in Newsreader, as on the site. All text is turned into outlines,
@@ -87,51 +87,60 @@ def outline(kind, text, size, x, y, fill):
     return f'<path fill="{fill}" d="{pen.getCommands()}"/>', pen_x
 
 # --- the mark ---
-# The B of the name (Saira Stencil One) laid on a 9 x 9 patch of chart, with one hit on it.
+# A patch of chart with a B laid out as a fleet, as (column, row, length, vertical) on a
+# 4 x 7 pixel B:   #XX.   the spine (7) down the left; the three bars (2) beside it;
+#                  #..X   the two bowls (2) on the right
+#                  #..X
+#                  #XX.   Each hull keeps thin seams between its cells, so the letter keeps its
+#                  #..X   pixels (as a pixel font draws B) while each ship stays one piece.
+#                  #..X   One hit, on the upper bowl.
+#                  #XX.
+SHIPS = [(0, 0, 7, True), (1, 0, 2, False), (1, 3, 2, False), (1, 6, 2, False), (3, 1, 2, True), (3, 4, 2, True)]
+HIT = (3, 1)
+
 S = 512                     # canvas
 T = 16                      # tile inset
 RX = 104                    # tile corner radius
-N = 9                       # cells across
+N = 9                       # cells across the tile
 CELL = (S - 2 * T) / N
+OX, OY = (N - 4) / 2, (N - 7) / 2   # the B's top left, in cells: centred (the grid shifts with it)
+INSET = CELL * .07          # hull inset from its cells' edges
+HULL_RX = CELL * .2         # hull corner radius
+SEAM = CELL * .05           # the line between a ship's cells
 EDGE = 10                   # tile outline
-B_HEIGHT = 5.6 * CELL       # the B's cap height, leaving chart around it
-HIT = (.84, .24)            # where the hit lands, as a fraction of the B's box from its top left (the upper bowl)
 
-# The site's colours: the tile is its chart (water, ruled, outlined in ink), the B ink.
+# The site's colours: the tile is its chart (water, ruled, outlined in ink), the ships ink.
 THEMES = {
     "dark": dict(sea="#132439", rule="#26394f", ink="#e4e8e1", hit="#ef5f4c"),
     "light": dict(sea="#e3e8e4", rule="#c4ccd0", ink="#13294b", hit="#c8372d"),
 }
 
-def glyph_box(kind, ch, size):
-    from fontTools.pens.boundsPen import BoundsPen
-    f, gs, _ = font(kind)
-    pen = BoundsPen(gs)
-    gs[f.getBestCmap()[ord(ch)]].draw(pen)
-    k = size / f["head"].unitsPerEm
-    x0, y0, x1, y1 = pen.bounds
-    return x0 * k, y0 * k, x1 * k, y1 * k
-
 def mark(t):
     """The mark's elements on a 512x512 canvas (no <svg> wrapper, so it can be placed in a banner)."""
     o = []
     w = S - 2 * T
+    X, Y = T + OX * CELL, T + OY * CELL          # the B's origin
     o.append(f'<defs><clipPath id="tile"><rect x="{T}" y="{T}" width="{w}" height="{w}" rx="{RX}"/></clipPath></defs>')
     o.append(f'<rect x="{T}" y="{T}" width="{w}" height="{w}" rx="{RX}" fill="{t["sea"]}"/>')
-    lines = "".join(f"M{T + k * CELL:.2f} {T}V{S - T}M{T} {T + k * CELL:.2f}H{S - T}" for k in range(1, N))
+    xs = [X + k * CELL for k in range(-N, N) if T < X + k * CELL < S - T]
+    ys = [Y + k * CELL for k in range(-N, N) if T < Y + k * CELL < S - T]
+    lines = "".join(f"M{x:.2f} {T}V{S - T}" for x in xs) + "".join(f"M{T} {y:.2f}H{S - T}" for y in ys)
     o.append(f'<path d="{lines}" stroke="{t["rule"]}" stroke-width="3" clip-path="url(#tile)"/>')
-    # The B: scaled so its height is seven cells, centred on the tile.
-    x0, y0, x1, y1 = glyph_box("display", "B", 100)
-    size = B_HEIGHT / (y1 - y0) * 100
-    x0, y0, x1, y1 = (v * size / 100 for v in (x0, y0, x1, y1))
-    gx, base = S / 2 - (x0 + x1) / 2, S / 2 + (y0 + y1) / 2
-    o.append(outline("display", "B", size, gx, base, t["ink"])[0])
-    # The hit: a cross in the sea's colour cut into the B, then red over it.
-    cx, cy = gx + x0 + HIT[0] * (x1 - x0), base - y1 + HIT[1] * (y1 - y0)
-    a = CELL * .26
+    for c, r, n, v in SHIPS:
+        x, y = X + c * CELL + INSET, Y + r * CELL + INSET
+        wd, ht = (CELL if v else n * CELL) - 2 * INSET, (n * CELL if v else CELL) - 2 * INSET
+        o.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{wd:.2f}" height="{ht:.2f}" rx="{HULL_RX:.2f}" fill="{t["ink"]}"/>')
+        # Seams between the hull's cells: each ship stays one piece, but the B keeps its cells.
+        for k in range(1, n):
+            p = (Y + (r + k) * CELL) if v else (X + (c + k) * CELL)
+            seam = f"M{x:.2f} {p:.2f}H{x + wd:.2f}" if v else f"M{p:.2f} {y:.2f}V{y + ht:.2f}"
+            o.append(f'<path d="{seam}" stroke="{t["sea"]}" stroke-width="{SEAM:.2f}"/>')
+    # The hit: a cross in the sea's colour cut into the hull, then red over it.
+    cx, cy = X + (HIT[0] + .5) * CELL, Y + (HIT[1] + .5) * CELL
+    a = CELL * .22
     cross = f"M{cx - a:.2f} {cy - a:.2f}L{cx + a:.2f} {cy + a:.2f}M{cx - a:.2f} {cy + a:.2f}L{cx + a:.2f} {cy - a:.2f}"
-    o.append(f'<path d="{cross}" stroke="{t["sea"]}" stroke-width="{CELL * .34:.2f}" stroke-linecap="round"/>')
-    o.append(f'<path d="{cross}" stroke="{t["hit"]}" stroke-width="{CELL * .17:.2f}" stroke-linecap="round"/>')
+    o.append(f'<path d="{cross}" stroke="{t["sea"]}" stroke-width="{CELL * .3:.2f}" stroke-linecap="round"/>')
+    o.append(f'<path d="{cross}" stroke="{t["hit"]}" stroke-width="{CELL * .15:.2f}" stroke-linecap="round"/>')
     o.append(f'<rect x="{T + EDGE / 2}" y="{T + EDGE / 2}" width="{w - EDGE}" height="{w - EDGE}" rx="{RX - EDGE / 2}" fill="none" stroke="{t["ink"]}" stroke-width="{EDGE}"/>')
     return "\n".join(o)
 
