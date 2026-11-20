@@ -1,0 +1,47 @@
+name: Deploy
+
+# Vercel deploys the website from every push to main (its Git integration).
+# This job records that as a GitHub deployment to the production environment,
+# so it shows under Deployments on the repository page, and only succeeds once
+# Vercel reports this commit deployed and the live site answers.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  statuses: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  production:
+    name: Website on Vercel
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://broadside.admingod.ch
+    timeout-minutes: 20
+    steps:
+      - name: Wait for Vercel to deploy this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 1 60); do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/status" \
+              --jq '[.statuses[] | select(.context == "Vercel")][0].state // "not started"')
+            echo "Vercel: $state"
+            case "$state" in
+              success) exit 0 ;;
+              failure|error) echo "::error::Vercel could not deploy $GITHUB_SHA"; exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "::error::Vercel did not finish deploying $GITHUB_SHA within 15 minutes"
+          exit 1
+      - name: Check the live site
+        run: |
+          curl -fsS --retry 3 --retry-delay 5 https://broadside.admingod.ch/ | grep -q Broadside
+          curl -fsS --retry 3 --retry-delay 5 -o /dev/null https://broadside.admingod.ch/play

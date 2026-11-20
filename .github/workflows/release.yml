@@ -58,7 +58,7 @@ jobs:
         run: |
           dir=broadside-${{ matrix.target }}
           mkdir "$dir"
-          cp target/${{ matrix.target }}/release/broadside README.md "$dir/"
+          cp target/${{ matrix.target }}/release/broadside README.md LICENSE "$dir/"
           tar -czf "$dir.tar.gz" "$dir"
       - name: Package (zip)
         if: runner.os == 'Windows'
@@ -66,7 +66,7 @@ jobs:
         run: |
           $dir = "broadside-${{ matrix.target }}"
           New-Item -ItemType Directory $dir | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/broadside.exe, README.md $dir
+          Copy-Item target/${{ matrix.target }}/release/broadside.exe, README.md, LICENSE $dir
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
       - uses: actions/upload-artifact@v4
         with:
