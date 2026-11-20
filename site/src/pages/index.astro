@@ -1,9 +1,9 @@
 ---
 import DownloadSection from "../components/DownloadSection.astro";
-import Facts from "../components/Facts.astro";
 import Hero from "../components/Hero.astro";
 import HowItWorks from "../components/HowItWorks.astro";
 import PlayInvite from "../components/PlayInvite.astro";
+import Strength from "../components/Strength.astro";
 import Base from "../layouts/Base.astro";
 import { VERSION } from "../lib/site";
 ---
@@ -13,7 +13,7 @@ import { VERSION } from "../lib/site";
   description={`A Battleship engine that weighs every fleet that could be hiding before each shot. Play it in your browser or download version ${VERSION} for the terminal.`}
 >
   <Hero />
-  <Facts />
+  <Strength />
   <DownloadSection />
   <HowItWorks />
   <PlayInvite />

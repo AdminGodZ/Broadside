@@ -2,28 +2,26 @@
 import Download from "@lucide/astro/icons/download";
 import Play from "@lucide/astro/icons/play";
 import { VERSION } from "../lib/site";
+import Button from "./Button.astro";
 import Replay from "./Replay.astro";
 ---
 
-<section class="hero">
+{/* With the header, exactly the first screen: what follows starts below the fold. */}
+<section
+  class="grid min-h-[calc(100svh_-_var(--spacing-header))] grid-cols-1 content-center items-center gap-x-18 gap-y-12 pt-[clamp(32px,7vw,88px)] pb-[clamp(48px,8vw,96px)] lg:grid-cols-[minmax(0,1fr)_minmax(0,470px)]"
+>
   <div>
-    <h1>Broadside</h1>
-    <p class="tagline">A Battleship engine that weighs every fleet that could be hiding before it takes a shot.</p>
-    <div class="actions">
-      <a class="button primary" href="/play"><Play class="icon" />Play in your browser</a>
-      <a class="button" href="#download"><Download class="icon" />Download</a>
+    <h1 class="mb-7 font-stencil text-[clamp(3.6rem,11.5vw,7.75rem)] leading-[.85] font-normal tracking-[-.005em]">
+      Broadside
+    </h1>
+    <p class="mb-9 max-w-[24ch] text-[clamp(1.35rem,2.6vw,1.75rem)] leading-[1.35]">
+      A Battleship engine that weighs every fleet that could be hiding before it takes a shot.
+    </p>
+    <div class="mb-[18px] flex flex-wrap gap-3">
+      <Button primary href="/play"><Play class="icon" />Play in your browser</Button>
+      <Button href="#download"><Download class="icon" />Download</Button>
     </div>
-    <p class="fine">Version {VERSION}. Free, and it runs offline.</p>
+    <p class="text-[.95rem] text-ink-soft">Version {VERSION}. Free, fully open source, and it runs offline.</p>
   </div>
   <Replay />
 </section>
-
-<style>
-  .hero {
-    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 470px); gap: 48px 72px;
-    align-items: center; padding: clamp(32px, 7vw, 88px) 0 clamp(48px, 8vw, 96px);
-  }
-  @media (max-width: 860px) { .hero { grid-template-columns: minmax(0, 1fr); } }
-  h1 { font: 400 clamp(3.6rem, 11.5vw, 7.75rem)/.85 var(--stencil); letter-spacing: -.005em; margin-bottom: 28px; }
-  .tagline { font-size: clamp(1.35rem, 2.6vw, 1.75rem); line-height: 1.35; max-width: 24ch; margin-bottom: 36px; }
-</style>

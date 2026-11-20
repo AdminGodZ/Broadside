@@ -2,35 +2,23 @@
 import logoDark from "../../../assets/logo-dark.svg";
 import logoLight from "../../../assets/logo-light.svg";
 import { REPO } from "../lib/site";
+import ExternalLink from "./ExternalLink.astro";
 import GithubIcon from "./GithubIcon.astro";
+
+const link = "text-ink-soft no-underline hover:text-ink hover:underline";
 ---
 
-<header>
-  <a class="brand" href="/">
-    <img class="logo-dark" src={logoDark.src} alt="" width="30" height="30" />
-    <img class="logo-light" src={logoLight.src} alt="" width="30" height="30" />
+{/* min-h-header: the hero fills the rest of the first screen. */}
+<header class="flex min-h-header flex-wrap items-center justify-between gap-x-8 gap-y-2.5 border-b border-rule py-5">
+  <a class="flex items-center gap-2.5 font-stencil text-[1.35rem] leading-none no-underline" href="/">
+    <img class="hidden dark:block" src={logoDark.src} alt="" width="30" height="30" />
+    <img class="dark:hidden" src={logoLight.src} alt="" width="30" height="30" />
     Broadside
   </a>
-  <nav aria-label="Main">
-    <a href="/play">Play</a>
-    <a href="#download">Download</a>
-    <a href="#how">How it works</a>
-    <a href={REPO} class="with-icon"><GithubIcon />GitHub</a>
+  <nav aria-label="Main" class="flex flex-wrap gap-x-[26px] gap-y-1">
+    <a class={link} href="/play">Play</a>
+    <a class={link} href="#download">Download</a>
+    <a class={link} href="#how">How it works</a>
+    <ExternalLink class={link} href={REPO}><GithubIcon />GitHub</ExternalLink>
   </nav>
 </header>
-
-<style>
-  header {
-    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 32px;
-    padding: 20px 0; border-bottom: 1px solid var(--rule);
-  }
-  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font: 400 1.35rem/1 var(--stencil); }
-  .logo-light { display: none; }
-  @media (prefers-color-scheme: light) {
-    .logo-dark { display: none; }
-    .logo-light { display: block; }
-  }
-  nav { display: flex; flex-wrap: wrap; gap: 4px 26px; }
-  nav a { text-decoration: none; color: var(--ink-soft); }
-  nav a:hover { color: var(--ink); text-decoration: underline; }
-</style>

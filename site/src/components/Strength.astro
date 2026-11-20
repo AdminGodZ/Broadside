@@ -1,0 +1,43 @@
+---
+import Crosshair from "@lucide/astro/icons/crosshair";
+import Layers from "@lucide/astro/icons/layers";
+import Trophy from "@lucide/astro/icons/trophy";
+import { REPO } from "../lib/site";
+import ExternalLink from "./ExternalLink.astro";
+
+// Every number here is measured in the README's "How strong is it".
+const facts = [
+  {
+    icon: Crosshair,
+    value: "44",
+    text: "shots on average to sink a randomly placed fleet. The classic probability-density bot needs 44.8; the best possible is 17.",
+  },
+  { icon: Layers, value: "30 billion", text: "fleet layouts, weighed exactly before every shot." },
+  { icon: Trophy, value: "7 in 10", text: "games won against a careful, human-style player." },
+];
+---
+
+<section id="strength" aria-labelledby="strength-title" class="border-t border-ink pt-10">
+  <h2 id="strength-title" class="max-w-[22ch]">The strongest Battleship engine we know of</h2>
+  <p class="mb-12 max-w-[56ch] text-ink-soft">
+    Most Battleship bots estimate where the ships might be. Broadside is exact: before every shot it weighs every fleet
+    that could still be hiding, it plays the endgame out, and it learns how its opponent plays. We haven't found another
+    engine that does all three, or one that sinks a randomly placed fleet in fewer shots.
+  </p>
+  <div class="grid grid-cols-1 gap-x-12 gap-y-8 md:grid-cols-3">
+    {
+      facts.map(({ icon: Icon, value, text }) => (
+        <p class="max-w-[30ch] text-ink-soft">
+          <Icon class="icon mb-3.5 block size-[30px] stroke-[1.5] text-ink" />
+          <strong class="mb-1 block text-[clamp(2.2rem,4.6vw,3rem)] leading-[1.1] font-medium text-ink lining-nums">
+            {value}
+          </strong>
+          {text}
+        </p>
+      ))
+    }
+  </div>
+  <p class="mt-9">
+    <ExternalLink href={`${REPO}#how-strong-is-it`}>How it was measured, game by game</ExternalLink>
+  </p>
+</section>
