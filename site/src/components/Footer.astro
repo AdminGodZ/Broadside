@@ -1,6 +1,7 @@
 ---
 import Tag from "@lucide/astro/icons/tag";
 import { RELEASES, REPO, VERSION } from "../lib/site";
+import ExternalLink from "./ExternalLink.astro";
 import GithubIcon from "./GithubIcon.astro";
 ---
 
@@ -10,8 +11,8 @@ import GithubIcon from "./GithubIcon.astro";
     <a href={`${REPO}/blob/main/LICENSE`}>MIT license</a>.
   </p>
   <nav aria-label="Footer">
-    <a href={REPO} class="with-icon"><GithubIcon />Source</a>
-    <a href={RELEASES} class="with-icon"><Tag class="icon" />Releases</a>
+    <ExternalLink href={REPO}><GithubIcon />Source</ExternalLink>
+    <ExternalLink href={RELEASES}><Tag class="icon" />Releases</ExternalLink>
   </nav>
 </footer>
 

@@ -11,10 +11,10 @@
   --hit: #c8372d;        /* signal red, for hits only */
   --mark: #e0a100;       /* the latest shot and keyboard focus */
   --grain-opacity: .5;
-  --serif: "Newsreader Variable", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
-  --stencil: "Saira Stencil One", "Arial Narrow", Impact, sans-serif;
+  /* --serif (Newsreader) and --stencil (Saira Stencil One) come from the fonts in astro.config.mjs. */
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --section-gap: clamp(72px, 11vw, 128px);
+  --header-h: 72px;      /* one row of header: 20px padding twice, 30px logo, 1px rule */
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -69,6 +69,12 @@ code, pre { font-family: var(--mono); font-size: .82em; }
   stroke-width: 1.75;
 }
 .with-icon { display: inline-flex; align-items: center; gap: .45em; }
+
+/* Read by screen readers, not shown. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
 
 /* Buttons */
 .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 18px; }

@@ -81,6 +81,20 @@ const kinds = { laptop: Laptop, monitor: Monitor };
     label.append(small);
     item.remove();
   }
+
+  // The list is a menu over the page: close it on a click elsewhere or on Escape.
+  const systems = document.querySelector<HTMLDetailsElement>(".systems");
+  if (systems) {
+    document.addEventListener("click", (e) => {
+      if (systems.open && !systems.contains(e.target as Node)) systems.open = false;
+    });
+    systems.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && systems.open) {
+        systems.open = false;
+        systems.querySelector("summary")?.focus();
+      }
+    });
+  }
 </script>
 
 <style>
@@ -88,7 +102,8 @@ const kinds = { laptop: Laptop, monitor: Monitor };
   @media (max-width: 860px) { .download { grid-template-columns: minmax(0, 1fr); } }
   .lead { max-width: 46ch; color: var(--ink-soft); margin-bottom: 28px; }
 
-  .systems { margin-top: 20px; }
+  /* The list opens over the page, like a menu, so nothing below it moves. */
+  .systems { margin-top: 20px; position: relative; width: max-content; }
   summary {
     cursor: pointer; color: var(--ink-soft); width: max-content; list-style: none;
     display: flex; align-items: center; gap: 6px;
@@ -98,7 +113,14 @@ const kinds = { laptop: Laptop, monitor: Monitor };
   summary :global(.icon) { transition: transform .15s; }
   .systems[open] summary :global(.icon) { transform: rotate(90deg); }
   @media (prefers-reduced-motion: reduce) { summary :global(.icon) { transition: none; } }
-  ul { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; }
+  ul {
+    list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px;
+    position: absolute; top: calc(100% + 8px); left: -6px; z-index: 10; min-width: max-content;
+    background: var(--paper); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 10px 30px -12px rgb(0 0 0 / .35);
+  }
+  li a { display: flex; padding: 6px 12px 6px 10px; border-radius: 4px; text-decoration: none; }
+  li a:hover { background: var(--water); }
   li :global(.icon) { color: var(--ink-soft); }
 
   .run { background: var(--water); border-radius: 6px; padding: 26px 28px 10px; }

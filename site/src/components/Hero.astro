@@ -21,7 +21,9 @@ import Replay from "./Replay.astro";
 <style>
   .hero {
     display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 470px); gap: 48px 72px;
-    align-items: center; padding: clamp(32px, 7vw, 88px) 0 clamp(48px, 8vw, 96px);
+    align-items: center; align-content: center; padding: clamp(32px, 7vw, 88px) 0 clamp(48px, 8vw, 96px);
+    /* With the header, exactly the first screen: the numbers start below the fold. */
+    min-height: calc(100svh - var(--header-h));
   }
   @media (max-width: 860px) { .hero { grid-template-columns: minmax(0, 1fr); } }
   h1 { font: 400 clamp(3.6rem, 11.5vw, 7.75rem)/.85 var(--stencil); letter-spacing: -.005em; margin-bottom: 28px; }

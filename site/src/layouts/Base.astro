@@ -1,7 +1,5 @@
 ---
-import "@fontsource-variable/newsreader/opsz.css";
-import "@fontsource-variable/newsreader/opsz-italic.css";
-import "@fontsource/saira-stencil-one/400.css";
+import { Font } from "astro:assets";
 import "../styles/global.css";
 import logoDark from "../../../assets/logo-dark.svg";
 import Footer from "../components/Footer.astro";
@@ -30,6 +28,8 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <meta name="theme-color" content="#eff1ec" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0e1b2c" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href={logoDark.src} type="image/svg+xml" />
+    <Font cssVariable="--serif" preload />
+    <Font cssVariable="--stencil" preload />
   </head>
   <body>
     <div class="wrap">

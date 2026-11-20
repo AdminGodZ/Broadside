@@ -1,0 +1,20 @@
+---
+// A link that leaves the site: opens in a new tab, and ends with an icon that says so.
+import ExternalLinkIcon from "@lucide/astro/icons/external-link";
+
+interface Props {
+  href: string;
+}
+const { href } = Astro.props;
+---
+
+<a href={href} class="with-icon" target="_blank" rel="noopener">
+  <slot />
+  <ExternalLinkIcon class="icon external" aria-hidden="true" />
+  <span class="visually-hidden">(opens in a new tab)</span>
+</a>
+
+<style>
+  a { gap: .4em; }
+  .external { width: .8em; height: .8em; margin-left: -.05em; opacity: .75; }
+</style>
