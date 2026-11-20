@@ -110,7 +110,7 @@ const kinds = { laptop: Laptop, monitor: Monitor };
   }
   summary::-webkit-details-marker { display: none; }
   summary:hover { color: var(--ink); }
-  summary :global(.icon) { transition: transform .15s; }
+  summary :global(.icon) { transition: transform .15s; translate: 0 -.07em; }
   .systems[open] summary :global(.icon) { transform: rotate(90deg); }
   @media (prefers-reduced-motion: reduce) { summary :global(.icon) { transition: none; } }
   ul {
@@ -128,5 +128,6 @@ const kinds = { laptop: Laptop, monitor: Monitor };
   .run p { color: var(--ink-soft); font-size: 1rem; }
   .run p code { color: var(--ink); }
   .note { display: flex; gap: 9px; }
-  .note :global(.icon) { margin-top: .3em; }
+  /* Centred on the first line: half-leading .3em, plus .43em to the optical middle, less half the icon. */
+  .note :global(.icon) { margin-top: .18em; }
 </style>
