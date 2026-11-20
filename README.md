@@ -298,6 +298,10 @@ and runs `site/build.sh`.
 | Fleet layouts with no ships touching, not even at corners | 3,851,502,784 |
 | Minimum possible shots | 17 |
 
+## License
+
+[MIT](LICENSE). Use it, change it, ship it; keep the copyright notice.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">

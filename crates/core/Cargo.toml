@@ -3,5 +3,8 @@ name = "broadside-core"
 description = "Broadside Battleship engine: rules, bitboards and AI"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
