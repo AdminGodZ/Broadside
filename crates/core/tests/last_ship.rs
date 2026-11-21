@@ -89,8 +89,9 @@ fn a_destroyer_in_twenty_cells() {
     let order = last::best(Bitboard(open), 2, 1_000_000).unwrap();
     assert_eq!((order.shot, order.total, order.placements), (74, 172, 26));
     assert_eq!(last::after(Bitboard(open), 2, 64, 1_000_000), Some(175));
-    // The search over listed placements gets there only with more time...
-    assert_eq!(total(without, sunk, 4, open), (175, 26));
+    // The search over listed placements gets there only with more time
+    // (it took 175 before its lines of play followed the cover rule)...
+    assert_eq!(total(without, sunk, 4, open), (173, 26));
     assert_eq!(total(patient, sunk, 4, open), (172, 26));
     // ...the engine, knowing the order outright, at once.
     assert_eq!(total(Broadside::new, sunk, 4, open), (172, 26));

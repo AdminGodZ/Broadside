@@ -205,6 +205,9 @@ pub struct Tree<'a> {
 
 /// Smaller positions are quicker to evaluate than to look up.
 const TABLE_MIN: usize = 4;
+/// Lines of play follow the cover rule in positions of at least this many
+/// placements; in smaller ones it gained nothing when measured.
+const COVER_MIN: usize = 8;
 /// Positions kept per table (about 50 bytes each).
 const TABLE_MAX: usize = 2_000_000;
 
@@ -321,7 +324,8 @@ impl<'a> Tree<'a> {
             // The likeliest two cells whatever they cover, then the best
             // by the cover rule.
             let mut by_cover = cands.clone();
-            let score = |c: usize| occ[c] * (1.0 + self.cfg.cover * (cover >> c & 1) as f64);
+            let bonus = self.cfg.cover * s.weight;
+            let score = |c: usize| occ[c] + bonus * (cover >> c & 1) as f64;
             by_cover.sort_by(|&a, &b| score(b).total_cmp(&score(a)));
             cands.truncate(2);
             for c in by_cover {
@@ -489,7 +493,7 @@ impl<'a> Tree<'a> {
         }
         if let Some(cover) = self.cover(x, hits) {
             for c in Bits(cover & s.or) {
-                occ[c] *= 1.0 + self.cfg.cover;
+                occ[c] += self.cfg.cover * s.weight;
             }
         }
         Bits(s.or).fold(s.or.trailing_zeros() as usize, |best, c| {
@@ -500,8 +504,7 @@ impl<'a> Tree<'a> {
     /// While hunting with the two-cell ship afloat: the cells of a smallest
     /// cover of its places in the worlds `x` (see `cover`).
     fn cover(&self, x: &[u32], hits: u128) -> Option<u128> {
-        let cfg = &self.cfg;
-        if cfg.cover <= 0.0 || cfg.rollout_cover == 0 || x.len() < cfg.rollout_cover {
+        if self.cfg.cover <= 0.0 || x.len() < COVER_MIN {
             return None;
         }
         let first = &self.worlds[x[0] as usize];
@@ -981,7 +984,12 @@ mod tests {
             let n = w.len();
             let idx: Vec<u32> = (0..n as u32).collect();
             let (mut y, mut z) = (vec![0u32; n], vec![0u32; n]);
-            let mut tree = Tree::new(&w, cfg(0, 0));
+            // The rollouts play plainly greedily: no cover rule in the tree.
+            let plain = Search {
+                cover: 0.0,
+                ..cfg(0, 0)
+            };
+            let mut tree = Tree::new(&w, plain);
             for x in Bits(k.unknown().0).take(12) {
                 let mut seen = Default::default();
                 let by_rollout: f64 = lists

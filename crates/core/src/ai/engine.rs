@@ -88,12 +88,9 @@ pub struct Search {
     /// rollouts' estimate.
     pub spread: usize,
     /// While hunting with the Destroyer afloat, a cell of a smallest cover
-    /// of its places counts this much more: its chance of a ship is
-    /// multiplied by one plus this (0 = no cover rule; see `cover`).
+    /// of its places counts as if its chance of a hit were this much
+    /// higher (0 = no cover rule; see `cover`).
     pub cover: f64,
-    /// Lines of play in the search follow the cover rule in positions of at
-    /// least this many placements (0 = never).
-    pub rollout_cover: usize,
 }
 
 pub struct Broadside {
@@ -112,12 +109,6 @@ pub struct Broadside {
     /// Whether the opponent puts ships back where they lay before; learns
     /// from its fleets while `learner` is set.
     pub repeats: Repeats,
-    /// EXPERIMENT: weight of a ship's chance on a cell, by ship.
-    pub hunt: [f64; SHIPS],
-    /// EXPERIMENT: the cover bonus while a hit is unexplained (0 = none).
-    pub cover_target: f64,
-    /// EXPERIMENT: the cover rule also holds under a learned belief.
-    pub cover_belief: bool,
 }
 
 /// Learns the opponent's placement habits by model selection.
@@ -241,17 +232,13 @@ impl Broadside {
                 last_nodes: 2_000,
                 race: 0,
                 spread: 15,
-                cover: 0.0,
-                rollout_cover: 0,
+                cover: 0.1,
             },
             prior: None,
             learner: Some(Learner::default()),
             race: None,
             habits: Habits::neutral(),
             repeats: Repeats::new(),
-            hunt: [1.0; SHIPS],
-            cover_target: 0.0,
-            cover_belief: false,
         }
     }
 
@@ -288,13 +275,14 @@ impl Broadside {
         (kinds != habits::neutral()).then_some(kinds)
     }
 
-    /// No search: always the likeliest cell.
+    /// No search and no cover rule: always the likeliest cell.
     pub fn greedy() -> Self {
         Self {
             search: Search {
                 exact_limit: 0,
                 max_afloat: 0,
                 last_nodes: 0,
+                cover: 0.0,
                 ..Self::new().search
             },
             ..Self::new()
@@ -601,39 +589,37 @@ impl Shooter for Broadside {
             Some(m) => m.scores(prior, k),
             None => cell_scores(&p, prior, k),
         };
+        // Greedy takes a certain hit before anything else.
+        let pool = if certain != 0 { certain } else { unknown };
+        // Hunting the Destroyer is a covering problem (see `cover`): a
+        // shot on a smallest cover of the places still open to it is worth
+        // more than its chance of a hit says. Worth a fixed amount of that
+        // chance, so a cell that a learned belief makes far likelier than
+        // the rest is still shot first.
         let sunk_len: u32 = (0..SHIPS)
             .filter(|&s| k.sunk[s].is_some())
             .map(|s| LENGTHS[s] as u32)
             .sum();
         let hunting = k.hits.count() == sunk_len;
-        let believing = mix.is_some() || !prior.is_none();
-        if !believing && self.hunt != [1.0; SHIPS] {
-            let by_ship = p.ship_cells();
-            scores = [0.0; CELLS];
-            for s in Bits(k.afloat_mask() as u128) {
-                for c in 0..CELLS {
-                    scores[c] += self.hunt[s] * by_ship[s][c] as f64;
-                }
-            }
-        }
-        // Greedy takes a certain hit before anything else.
-        let pool = if certain != 0 { certain } else { unknown };
-        // Hunting the Destroyer is a covering problem (see `cover`): cells
-        // of a smallest cover of its places count for more.
-        let bonus = if hunting { s.cover } else { self.cover_target };
-        if bonus > 0.0 && certain == 0 && k.sunk[4].is_none() && (self.cover_belief || !believing) {
-            let live = &mix.as_ref().map_or(&p, |m| &m.support).ships[4];
+        if s.cover > 0.0 && hunting && k.sunk[SHIPS - 1].is_none() {
+            let live = &mix.as_ref().map_or(&p, |m| &m.support).ships[SHIPS - 1];
             let (mut across, mut down) = (0u128, 0u128);
             for c in Bits(unknown) {
-                if live[2 * c] > 0 && unknown >> (c + 1) & 1 == 1 {
+                if live[2 * c] > 0 {
                     across |= 1 << c;
                 }
-                if live[2 * c + 1] > 0 && unknown >> (c + 10) & 1 == 1 {
+                if live[2 * c + 1] > 0 {
                     down |= 1 << c;
                 }
             }
+            // What a score of one whole chance is (as in `chances`).
+            let whole = match (&mix, prior.is_none()) {
+                (Some(m), _) => m.weight(),
+                (None, false) => 1.0,
+                (None, true) => p.layouts as f64,
+            };
             for c in Bits(super::cover::cover_cells(across, down)) {
-                scores[c] *= 1.0 + bonus;
+                scores[c] += s.cover * whole;
             }
         }
         let sample = mix.is_none() && s.samples >= 2;
@@ -656,6 +642,43 @@ impl Shooter for Broadside {
 mod tests {
     use super::*;
     use crate::game::{Board, Layout};
+
+    /// One miss in the middle of an empty board: the smallest cover of the
+    /// Destroyer's places is the miss's own colour of the checkerboard.
+    fn one_miss() -> (Knowledge, u128) {
+        let mut k = Knowledge::new();
+        k.record(44, Outcome::Miss);
+        let colour = Bits(k.unknown().0)
+            .filter(|c| (c / 10 + c % 10) % 2 == 0)
+            .fold(0u128, |m, c| m | 1 << c);
+        (k, colour)
+    }
+
+    #[test]
+    fn hunting_keeps_to_a_cover_of_the_destroyer() {
+        let (k, colour) = one_miss();
+        let mut e = Broadside::new();
+        for seed in 0..40 {
+            let c = e.choose(&k, &mut Rng::new(seed));
+            assert!(colour >> c & 1 == 1, "cell {c} is off the cover");
+        }
+    }
+
+    #[test]
+    fn a_likely_cell_outweighs_the_cover() {
+        let (k, colour) = one_miss();
+        // An opponent known to keep a ship on cell 45, which is off the
+        // cover: the cover's bonus must not stand in the way.
+        assert!(colour >> 45 & 1 == 0);
+        let mut theta = [0.0; CELLS];
+        theta[45] = 6.0;
+        let mut e = Broadside {
+            prior: Some(Arc::new(Tilt::from_theta(theta))),
+            learner: None,
+            ..Broadside::new()
+        };
+        assert_eq!(e.choose(&k, &mut Rng::new(1)), 45);
+    }
 
     #[test]
     fn outcome_posteriors_partition_occupied_layouts() {

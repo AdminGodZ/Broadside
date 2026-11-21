@@ -188,7 +188,7 @@ impl Placer for ContraryPlacer {
 
 pub const SHOOTERS: &[&str] = &[
     "broadside",
-    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples, last, race, spread; apart, corners, weight)",
+    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples, last, race, spread, cover; apart, corners, weight, repeats)",
     "greedy",
     "density",
     "NAME@tiltA (expects tiltA placement)",
@@ -226,22 +226,13 @@ fn engine(name: &str) -> Option<engine::Broadside> {
     // Believed chance, in percent, that the opponent's ships lie apart or
     // meet at corners only.
     let (mut apart, mut corners) = (None, None);
-    let mut hunt = [1.0; 5];
     for setting in name.strip_prefix("broadside:")?.split(',') {
         let (key, v) = setting.split_once('=')?;
         let v: usize = v.parse().ok()?;
         match key {
             "apart" => apart = Some(v as f64 / 100.0),
-            "w5" => hunt[0] = v as f64 / 100.0,
-            "w4" => hunt[1] = v as f64 / 100.0,
-            "w3" => {
-                hunt[2] = v as f64 / 100.0;
-                hunt[3] = v as f64 / 100.0;
-            }
-            "w2" => hunt[4] = v as f64 / 100.0,
-            "cov" => s.cover = v as f64 / 100.0,
-            "covt" => e.cover_target = v as f64 / 100.0,
-            "covb" => e.cover_belief = v != 0,
+            // The cover rule's bonus, in points of a hit's chance.
+            "cover" => s.cover = v as f64 / 100.0,
             "corners" => corners = Some(v as f64 / 100.0),
             // How many tenths of a revealed fleet that belief counts for.
             "weight" => e.habits.games = v as f64 / 10.0,
@@ -257,11 +248,9 @@ fn engine(name: &str) -> Option<engine::Broadside> {
             "last" => s.last_nodes = v as u64,
             "race" => s.race = v,
             "spread" => s.spread = v,
-            "rcov" => s.rollout_cover = v,
             _ => return None,
         }
     }
-    e.hunt = hunt;
     let s = &mut e.search;
     let valid = s.candidates >= 1 && s.solve_worlds <= 64 && (s.max_afloat == 0 || s.samples >= 2);
     // Kinds not named share what is left as under uniform placement.
