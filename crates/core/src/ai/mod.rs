@@ -227,7 +227,6 @@ fn engine(name: &str) -> Option<engine::Broadside> {
     // meet at corners only.
     let (mut apart, mut corners) = (None, None);
     let mut hunt = [1.0; 5];
-    let mut hunt_only = false;
     for setting in name.strip_prefix("broadside:")?.split(',') {
         let (key, v) = setting.split_once('=')?;
         let v: usize = v.parse().ok()?;
@@ -240,10 +239,9 @@ fn engine(name: &str) -> Option<engine::Broadside> {
                 hunt[3] = v as f64 / 100.0;
             }
             "w2" => hunt[4] = v as f64 / 100.0,
-            "honly" => hunt_only = v != 0,
-            "par" => e.parity = v as u8,
-            "cov" => e.cover = v as f64 / 100.0,
-            "covt" => e.cover_target = v != 0,
+            "cov" => s.cover = v as f64 / 100.0,
+            "covt" => e.cover_target = v as f64 / 100.0,
+            "covb" => e.cover_belief = v != 0,
             "corners" => corners = Some(v as f64 / 100.0),
             // How many tenths of a revealed fleet that belief counts for.
             "weight" => e.habits.games = v as f64 / 10.0,
@@ -264,7 +262,6 @@ fn engine(name: &str) -> Option<engine::Broadside> {
         }
     }
     e.hunt = hunt;
-    e.hunt_only = hunt_only;
     let s = &mut e.search;
     let valid = s.candidates >= 1 && s.solve_worlds <= 64 && (s.max_afloat == 0 || s.samples >= 2);
     // Kinds not named share what is left as under uniform placement.
@@ -336,6 +333,20 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
             placed: 0,
         }),
         "broadside" => Box::new(placement::AdaptivePlacer::new()),
+        // EXPERIMENT: broadside:fade=PERCENT,top=N.
+        n if n.starts_with("broadside:") => {
+            let mut p = placement::AdaptivePlacer::new();
+            for setting in n[10..].split(',') {
+                let (key, v) = setting.split_once('=')?;
+                let v: u64 = v.parse().ok()?;
+                match key {
+                    "fade" => p.fade = v as f64 / 100.0,
+                    "top" => p.top = v,
+                    _ => return None,
+                }
+            }
+            Box::new(p)
+        }
         "lateness" => Box::new(placement::LatenessPlacer::new()),
         "equilibrium" => Box::new(placement::MixedPlacer::equilibrium()),
         n if n.starts_with("mix:") => {

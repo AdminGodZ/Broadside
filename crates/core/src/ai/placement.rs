@@ -271,9 +271,16 @@ impl Placer for MixedPlacer {
 pub struct AdaptivePlacer {
     equilibrium: MixedPlacer,
     /// Per cell: the summed time (shots fired before it, as a share of the
-    /// board) at which the opponent came to it while hunting.
+    /// board) at which the opponent came to it while hunting, older games
+    /// counting for less (`fade`); and the games' summed weight.
     late: [f64; CELLS],
-    games: u32,
+    games: f64,
+    /// What a game counts for after each further one: below 1 the picture
+    /// follows an opponent that changes where it looks.
+    pub fade: f64,
+    /// The layout placed is one of the best this many of the draws, so that
+    /// the same hiding place does not come up game after game.
+    pub top: u64,
     /// Plays and summed reward of the equilibrium mix and of hiding.
     arm_plays: [u32; 2],
     arm_shots: [f64; 2],
@@ -282,9 +289,6 @@ pub struct AdaptivePlacer {
 
 /// Layouts drawn per game when hiding.
 const HIDE_DRAWS: usize = 600;
-/// The layout placed is one of the best this many, so that the same hiding
-/// place does not come up game after game.
-const HIDE_TOP: u64 = 5;
 /// What the average ship counts for next to the best-hidden one.
 const HIDE_MEAN: f64 = 0.25;
 /// Strength of the tilt toward late cells that a third of the draws come
@@ -302,7 +306,9 @@ impl AdaptivePlacer {
         Self {
             equilibrium: MixedPlacer::equilibrium(),
             late: [0.0; CELLS],
-            games: 0,
+            games: 0.0,
+            fade: 1.0,
+            top: 5,
             arm_plays: [0; 2],
             arm_shots: [0.0; 2],
             last_arm: 0,
@@ -311,7 +317,7 @@ impl AdaptivePlacer {
 
     fn pick_arm(&self) -> usize {
         // Nothing seen yet: nowhere to hide.
-        if self.games == 0 {
+        if self.games == 0.0 {
             return 0;
         }
         // UCB1 on the shots the opponent needs (as a fraction of the board).
@@ -342,7 +348,7 @@ impl AdaptivePlacer {
 
     /// A layout whose ships lie where the opponent has looked late.
     fn hide(&mut self, rng: &mut Rng) -> Layout {
-        let late = self.late.map(|l| l / self.games as f64);
+        let late = self.late.map(|l| l / self.games);
         let mu = late.iter().sum::<f64>() / CELLS as f64;
         let sd = (late.iter().map(|l| (l - mu).powi(2)).sum::<f64>() / CELLS as f64)
             .sqrt()
@@ -364,7 +370,7 @@ impl AdaptivePlacer {
             })
             .collect();
         scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-        scored[rng.below(HIDE_TOP.min(scored.len() as u64)) as usize].1
+        scored[rng.below(self.top.clamp(1, scored.len() as u64)) as usize].1
     }
 }
 
@@ -396,9 +402,9 @@ impl Placer for AdaptivePlacer {
         }
         let end = opponent_shots.len() as f64 / CELLS as f64;
         for (l, t) in self.late.iter_mut().zip(time) {
-            *l += t.unwrap_or((end + 1.0) / 2.0);
+            *l = self.fade * *l + t.unwrap_or((end + 1.0) / 2.0);
         }
-        self.games += 1;
+        self.games = self.fade * self.games + 1.0;
         // Shots per hit, scaled to the whole fleet: the shots the opponent
         // needed if it sank us, an estimate of them if the game ended first.
         let n = opponent_shots.len().max(1) as f64;

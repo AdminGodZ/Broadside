@@ -87,9 +87,12 @@ pub struct Search {
     /// How far, in tenths of a shot, the opponent may stray from the
     /// rollouts' estimate.
     pub spread: usize,
-    /// EXPERIMENT: lines of play in the search hunt on a smallest cover of
-    /// the Destroyer's places, in positions of at least this many
-    /// placements (0 = never).
+    /// While hunting with the Destroyer afloat, a cell of a smallest cover
+    /// of its places counts this much more: its chance of a ship is
+    /// multiplied by one plus this (0 = no cover rule; see `cover`).
+    pub cover: f64,
+    /// Lines of play in the search follow the cover rule in positions of at
+    /// least this many placements (0 = never).
     pub rollout_cover: usize,
 }
 
@@ -111,14 +114,10 @@ pub struct Broadside {
     pub repeats: Repeats,
     /// EXPERIMENT: weight of a ship's chance on a cell, by ship.
     pub hunt: [f64; SHIPS],
-    /// EXPERIMENT: weights apply only while no hit is unexplained.
-    pub hunt_only: bool,
-    /// EXPERIMENT: hunting keeps to one colour of the lattice of the smallest ship afloat (1 = destroyer only, 2 = any smallest).
-    pub parity: u8,
-    /// EXPERIMENT: while hunting with the Destroyer afloat, cells of a smallest cover of its places score this much more (10 or more: only they are shot).
-    pub cover: f64,
-    /// EXPERIMENT: the cover bonus also counts while a hit is unexplained.
-    pub cover_target: bool,
+    /// EXPERIMENT: the cover bonus while a hit is unexplained (0 = none).
+    pub cover_target: f64,
+    /// EXPERIMENT: the cover rule also holds under a learned belief.
+    pub cover_belief: bool,
 }
 
 /// Learns the opponent's placement habits by model selection.
@@ -242,6 +241,7 @@ impl Broadside {
                 last_nodes: 2_000,
                 race: 0,
                 spread: 15,
+                cover: 0.0,
                 rollout_cover: 0,
             },
             prior: None,
@@ -250,10 +250,8 @@ impl Broadside {
             habits: Habits::neutral(),
             repeats: Repeats::new(),
             hunt: [1.0; SHIPS],
-            hunt_only: false,
-            parity: 0,
-            cover: 0.0,
-            cover_target: false,
+            cover_target: 0.0,
+            cover_belief: false,
         }
     }
 
@@ -603,98 +601,39 @@ impl Shooter for Broadside {
             Some(m) => m.scores(prior, k),
             None => cell_scores(&p, prior, k),
         };
-        if mix.is_none() && prior.is_none() && self.hunt != [1.0; SHIPS] {
-            let sunk_len: u32 = (0..SHIPS)
-                .filter(|&s| k.sunk[s].is_some())
-                .map(|s| LENGTHS[s] as u32)
-                .sum();
-            let target = k.hits.count() > sunk_len;
-            if !(self.hunt_only && target) {
-                let by_ship = p.ship_cells();
-                scores = [0.0; CELLS];
-                for s in Bits(k.afloat_mask() as u128) {
-                    for c in 0..CELLS {
-                        scores[c] += self.hunt[s] * by_ship[s][c] as f64;
-                    }
+        let sunk_len: u32 = (0..SHIPS)
+            .filter(|&s| k.sunk[s].is_some())
+            .map(|s| LENGTHS[s] as u32)
+            .sum();
+        let hunting = k.hits.count() == sunk_len;
+        let believing = mix.is_some() || !prior.is_none();
+        if !believing && self.hunt != [1.0; SHIPS] {
+            let by_ship = p.ship_cells();
+            scores = [0.0; CELLS];
+            for s in Bits(k.afloat_mask() as u128) {
+                for c in 0..CELLS {
+                    scores[c] += self.hunt[s] * by_ship[s][c] as f64;
                 }
             }
         }
         // Greedy takes a certain hit before anything else.
-        let mut pool = if certain != 0 { certain } else { unknown };
-        if self.cover > 0.0
-            && certain == 0
-            && mix.is_none()
-            && prior.is_none()
-            && k.sunk[4].is_none()
-        {
-            let sunk_len: u32 = (0..SHIPS)
-                .filter(|&s| k.sunk[s].is_some())
-                .map(|s| LENGTHS[s] as u32)
-                .sum();
-            let hunting = k.hits.count() == sunk_len;
-            if hunting || (self.cover_target && self.cover < 10.0) {
-                let (mut across, mut down) = (0u128, 0u128);
-                for c in Bits(unknown) {
-                    if p.ships[4][2 * c] > 0 && unknown >> (c + 1) & 1 == 1 {
-                        across |= 1 << c;
-                    }
-                    if p.ships[4][2 * c + 1] > 0 && unknown >> (c + 10) & 1 == 1 {
-                        down |= 1 << c;
-                    }
+        let pool = if certain != 0 { certain } else { unknown };
+        // Hunting the Destroyer is a covering problem (see `cover`): cells
+        // of a smallest cover of its places count for more.
+        let bonus = if hunting { s.cover } else { self.cover_target };
+        if bonus > 0.0 && certain == 0 && k.sunk[4].is_none() && (self.cover_belief || !believing) {
+            let live = &mix.as_ref().map_or(&p, |m| &m.support).ships[4];
+            let (mut across, mut down) = (0u128, 0u128);
+            for c in Bits(unknown) {
+                if live[2 * c] > 0 && unknown >> (c + 1) & 1 == 1 {
+                    across |= 1 << c;
                 }
-                let cover = super::cover::cover_cells(across, down);
-                if cover != 0 {
-                    if self.cover >= 10.0 {
-                        pool = cover;
-                    } else {
-                        for c in Bits(cover) {
-                            scores[c] *= 1.0 + self.cover;
-                        }
-                    }
+                if live[2 * c + 1] > 0 && unknown >> (c + 10) & 1 == 1 {
+                    down |= 1 << c;
                 }
             }
-        }
-        if self.parity > 0 && certain == 0 && mix.is_none() && prior.is_none() {
-            let sunk_len: u32 = (0..SHIPS)
-                .filter(|&s| k.sunk[s].is_some())
-                .map(|s| LENGTHS[s] as u32)
-                .sum();
-            let smallest = (0..SHIPS)
-                .filter(|&s| k.sunk[s].is_none())
-                .map(|s| LENGTHS[s])
-                .min()
-                .unwrap();
-            if k.hits.count() == sunk_len && (smallest == 2 || self.parity == 2) {
-                // The colour class holding the most weight of the smallest ships.
-                let by_ship = p.ship_cells();
-                let mut best = (-1.0, 0u128);
-                for col in 0..smallest {
-                    let mut m = 0u128;
-                    let mut w = 0.0;
-                    for c in Bits(unknown) {
-                        if (c / 10 + c % 10) % smallest == col {
-                            let v: u64 = (0..SHIPS)
-                                .filter(|&s| k.sunk[s].is_none() && LENGTHS[s] == smallest)
-                                .map(|s| by_ship[s][c])
-                                .sum();
-                            if v > 0 {
-                                m |= 1 << c;
-                                w += v as f64;
-                            }
-                        }
-                    }
-                    // Stick with the colour most shot already: fewest unshot cells per weight.
-                    let shot = Bits(k.shots().0)
-                        .filter(|&c| (c / 10 + c % 10) % smallest == col)
-                        .count() as f64;
-                    let key = shot * 1e6 + w / p.layouts as f64;
-                    if m != 0 && key > best.0 {
-                        best = (key, m);
-                    }
-                }
-                if best.1 != 0 {
-                    pool = best.1;
-                }
+            for c in Bits(super::cover::cover_cells(across, down)) {
+                scores[c] *= 1.0 + bonus;
             }
         }
         let sample = mix.is_none() && s.samples >= 2;

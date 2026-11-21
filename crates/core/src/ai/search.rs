@@ -317,16 +317,18 @@ impl<'a> Tree<'a> {
         let occ = occupancy(self.worlds.iter(), hits);
         let mut cands = ranked(&occ, s.or);
         let n = self.cfg.candidates.max(1);
-        if let Some(cover) = self.cover(&root, hits).filter(|c| c & s.or != 0) {
-            // The likeliest two cells whatever they cover, then the
-            // likeliest cells of the cover.
-            let mut picked: Vec<usize> = cands.iter().copied().take(2.min(n)).collect();
-            for &c in &cands {
-                if picked.len() < n && cover >> c & 1 == 1 && !picked.contains(&c) {
-                    picked.push(c);
+        if let Some(cover) = self.cover(&root, hits) {
+            // The likeliest two cells whatever they cover, then the best
+            // by the cover rule.
+            let mut by_cover = cands.clone();
+            let score = |c: usize| occ[c] * (1.0 + self.cfg.cover * (cover >> c & 1) as f64);
+            by_cover.sort_by(|&a, &b| score(b).total_cmp(&score(a)));
+            cands.truncate(2);
+            for c in by_cover {
+                if !cands.contains(&c) {
+                    cands.push(c);
                 }
             }
-            cands = picked;
         }
         cands.truncate(n);
         let values = self.judge(&cands, threads, &|tree, x| tree.after(x, hits, &root));
@@ -485,11 +487,12 @@ impl<'a> Tree<'a> {
                 occ[c] += self.weight[i as usize];
             }
         }
-        let pool = self
-            .cover(x, hits)
-            .filter(|c| c & s.or != 0)
-            .map_or(s.or, |c| c & s.or);
-        Bits(pool).fold(pool.trailing_zeros() as usize, |best, c| {
+        if let Some(cover) = self.cover(x, hits) {
+            for c in Bits(cover & s.or) {
+                occ[c] *= 1.0 + self.cfg.cover;
+            }
+        }
+        Bits(s.or).fold(s.or.trailing_zeros() as usize, |best, c| {
             if occ[c] > occ[best] { c } else { best }
         })
     }
@@ -497,7 +500,8 @@ impl<'a> Tree<'a> {
     /// While hunting with the two-cell ship afloat: the cells of a smallest
     /// cover of its places in the worlds `x` (see `cover`).
     fn cover(&self, x: &[u32], hits: u128) -> Option<u128> {
-        if self.cfg.rollout_cover == 0 || x.len() < self.cfg.rollout_cover {
+        let cfg = &self.cfg;
+        if cfg.cover <= 0.0 || cfg.rollout_cover == 0 || x.len() < cfg.rollout_cover {
             return None;
         }
         let first = &self.worlds[x[0] as usize];
