@@ -4,6 +4,7 @@
 // placement slots are top-left cell * 2 + vertical; outcomes 0 miss, 1 hit,
 // 2 + ship for a sinking.
 import wasmUrl from "./broadside.wasm?url";
+import { SHIPS, TEXT, cellName as name } from "./shared";
 
 interface Engine {
   bs_new_game(seed: number): void;
@@ -24,9 +25,6 @@ type Phase = "loading" | "placing" | "battle" | "over";
 interface Side { shots: Map<number, number>; sunk: number[]; count: number; last: number | null; fresh: number | null }
 interface Chart { cells: HTMLButtonElement[]; layer: HTMLDivElement }
 
-const SHIPS: [string, number][] = [["Carrier", 5], ["Battleship", 4], ["Cruiser", 3], ["Submarine", 3], ["Destroyer", 2]];
-const ROWS = "ABCDEFGHIJ";
-const name = (c: number) => ROWS[Math.floor(c / 10)] + (c % 10 + 1);
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const KEYS = matchMedia("(hover: hover)").matches; // keyboard hints only where there is likely a keyboard
 const OUT = (o: number) => (o === 0 ? "miss" : o === 1 ? "hit" : "sunk");
@@ -60,30 +58,17 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLEl
   return Object.assign(document.createElement(tag), props);
 }
 
-function buildChart(root: HTMLElement, onCell: (i: number | null, kind: "click" | "enter" | "leave") => void): Chart {
-  root.replaceChildren(el("span", { className: "axis" }));
-  for (let c = 0; c < 10; c++) root.append(el("span", { className: "axis", textContent: String(c + 1) }));
-  for (let r = 0; r < 10; r++) {
-    const a = el("span", { className: "axis", textContent: ROWS[r] });
-    a.style.gridColumn = "1";
-    a.style.gridRow = String(r + 2);
-    root.append(a);
-  }
-  const sea = el("div", { className: "sea" });
-  const layer = el("div", { className: "layer" });
-  sea.append(layer);
-  const cells = Array.from({ length: 100 }, (_, i) => {
-    const b = el("button", { className: "cell", type: "button" });
-    b.setAttribute("aria-label", name(i));
+/** A chart from the page's markup (Chart.astro), with its cells wired up. */
+function chart(root: HTMLElement, onCell: (i: number | null, kind: "click" | "enter" | "leave") => void): Chart {
+  const sea = root.querySelector<HTMLDivElement>(".sea")!;
+  const cells = [...sea.querySelectorAll<HTMLButtonElement>(".cell")];
+  cells.forEach((b, i) => {
     b.addEventListener("click", () => onCell(i, "click"));
     b.addEventListener("pointerenter", () => onCell(i, "enter"));
     b.addEventListener("focus", () => onCell(i, "enter"));
-    sea.append(b);
-    return b;
   });
   sea.addEventListener("pointerleave", () => onCell(null, "leave"));
-  root.append(sea);
-  return { cells, layer };
+  return { cells, layer: sea.querySelector<HTMLDivElement>(".layer")! };
 }
 
 let target: Chart, home: Chart;
@@ -133,7 +118,7 @@ function randomFleet() {
   S.fleet = SHIPS.map((_, s) => E.bs_offer_slot(s));
   S.selected = null;
   S.fresh = "all";
-  note("A random fleet. Move any ship, or start the battle.");
+  note(TEXT.random);
   render();
 }
 function clearFleet() {
@@ -215,18 +200,23 @@ function finish(youWon: boolean) {
   b.hidden = false;
   render();
 }
+/** The fleet the player last went into battle with, if any. Game.astro checks it the same way before the first paint. */
+function savedFleet(): number[] | null {
+  let saved: unknown = null;
+  try {
+    saved = JSON.parse(localStorage.getItem("broadside.fleet") ?? "null");
+  } catch {}
+  return Array.isArray(saved) && saved.length === 5 && saved.every((x) => Number.isInteger(x)) ? saved : null;
+}
 function newGame() {
   E.bs_new_game(Math.random() * 2 ** 52);
   Object.assign(S, { phase: "placing", selected: null, hover: null, reveal: null, thinking: false, fresh: null, you: newSide(), it: newSide() });
   $("log").replaceChildren();
   $("banner").hidden = true;
-  let saved: unknown = null;
-  try {
-    saved = JSON.parse(localStorage.getItem("broadside.fleet") ?? "null");
-  } catch {}
-  if (Array.isArray(saved) && saved.length === 5 && saved.every((x) => Number.isInteger(x))) {
+  const saved = savedFleet();
+  if (saved) {
     S.fleet = saved;
-    note("Your last fleet is in position. Move any ship, or start the battle.");
+    note(TEXT.saved);
   } else randomFleet();
   render();
 }
@@ -284,7 +274,7 @@ function renderDock() {
     s !== null
       ? `Click a cell for the ${SHIPS[s][0]}'s ${S.vertical ? "top" : "left"} end.` +
         (S.fleet[s] !== null ? (KEYS ? " Esc puts it back." : " Tap it in this list to put it back.") : "")
-      : "Click a ship on the chart, or in this list, to move it.";
+      : TEXT.pickHint;
 }
 
 function renderTally(list: HTMLElement, sunk: number[]) {
@@ -389,7 +379,7 @@ function render() {
       const [n, len] = SHIPS[S.selected];
       const turn = KEYS ? "Press R to turn it." : "Turn it with Across or Down.";
       msg.replaceChildren(S.fleet[S.selected] === null ? `Place your ${n}` : `Move your ${n}`, sub(notice ?? `${len} cells, ${S.vertical ? "down" : "across"}. ${turn}`));
-    } else msg.replaceChildren(ready ? "Your fleet is ready" : "Place your fleet", sub(notice ?? "Move any ship, or start the battle."));
+    } else msg.replaceChildren(ready ? TEXT.ready : "Place your fleet", sub(notice ?? TEXT.moveOn));
     notice = null;
   } else if (S.phase === "battle") {
     msg.replaceChildren(...(S.thinking ? ["The engine is aiming…", sub("It weighs every fleet that could be hiding.")] : ["Your shot", sub("Pick a cell in enemy waters.")]));
@@ -406,16 +396,26 @@ function render() {
 async function loadEngine(): Promise<Engine> {
   // The offline single-file version (scripts/offline.mjs) carries the engine inline.
   const inline = (window as { BROADSIDE_WASM?: string }).BROADSIDE_WASM;
-  const bytes = inline ? Uint8Array.from(atob(inline), (ch) => ch.charCodeAt(0)) : await (await fetch(wasmUrl)).arrayBuffer();
-  const { instance } = await WebAssembly.instantiate(bytes, {});
+  if (inline) return (await WebAssembly.instantiate(Uint8Array.from(atob(inline), (ch) => ch.charCodeAt(0)), {})).instance.exports as unknown as Engine;
+  // Compiled while it downloads (the page preloads it, see play.astro). A server that
+  // sends the wrong content type makes that fail; then the bytes come from the cache.
+  let instance: WebAssembly.Instance;
+  try {
+    ({ instance } = await WebAssembly.instantiateStreaming(fetch(wasmUrl), {}));
+  } catch {
+    ({ instance } = await WebAssembly.instantiate(await (await fetch(wasmUrl)).arrayBuffer(), {}));
+  }
   return instance.exports as unknown as Engine;
 }
 
-export async function start() {
-  target = buildChart($("target"), (i, kind) => {
+export function start() {
+  const engine = loadEngine();
+  // Random fleet and Start battle need the engine; pressed before it is there, they wait for it.
+  const withEngine = (f: () => void) => () => (E ? f() : engine.then(f, () => {}));
+  target = chart($("target"), (i, kind) => {
     if (kind === "click" && i !== null) playerFire(i);
   });
-  home = buildChart($("home"), (i, kind) => {
+  home = chart($("home"), (i, kind) => {
     if (S.phase !== "placing") return;
     if (kind === "click" && i !== null) placeAt(i);
     else if (S.hover !== i) {
@@ -435,17 +435,32 @@ export async function start() {
   });
   $("dir-h").addEventListener("click", () => setVertical(false));
   $("dir-v").addEventListener("click", () => setVertical(true));
-  $("random").addEventListener("click", randomFleet);
+  $("random").addEventListener("click", withEngine(randomFleet));
   $("clear").addEventListener("click", clearFleet);
-  $("start").addEventListener("click", startBattle);
+  $("start").addEventListener("click", withEngine(startBattle));
   $("resign").addEventListener("click", () => finish(false));
   $("new-game").addEventListener("click", newGame);
   $("heat").addEventListener("change", render);
-  try {
-    E = await loadEngine();
-    newGame();
-  } catch (err) {
-    const box = el("div", { className: "error", textContent: `The engine could not start: ${(err as Error).message}.` });
-    $("msg").replaceWith(box);
+
+  // A saved fleet needs no engine to be shown or moved: placing starts now.
+  const saved = savedFleet();
+  if (saved) {
+    S.phase = "placing";
+    S.fleet = saved;
+    note(TEXT.saved);
+    render();
   }
+  engine.then(
+    (e) => {
+      E = e;
+      if (S.phase === "placing") E.bs_new_game(Math.random() * 2 ** 52); // keep the fleet, and any move already made
+      else newGame();
+    },
+    (err) => {
+      S.phase = "loading";
+      $("dock").hidden = true;
+      const box = el("div", { className: "error", textContent: `The engine could not start: ${(err as Error).message}.` });
+      $("msg").replaceWith(box);
+    },
+  );
 }
