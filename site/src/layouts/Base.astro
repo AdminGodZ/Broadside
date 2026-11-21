@@ -2,6 +2,7 @@
 import { Font } from "astro:assets";
 import "../styles/global.css";
 import logoDark from "../../../assets/logo-dark.svg";
+import engineUrl from "../components/game/broadside.wasm?url";
 import Footer from "../components/Footer.astro";
 import Header from "../components/Header.astro";
 
@@ -11,6 +12,15 @@ interface Props {
 }
 const { title, description } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
+
+// Following a link should feel instant. Chromium browsers prerender a page of the
+// site once the pointer rests on a link to it (or the finger goes down), script
+// and engine included; /play's page is fetched ahead as soon as there's a link to it.
+// Downloads (the 2 MB offline game) are never fetched ahead.
+const speculation = {
+  prerender: [{ where: { and: [{ href_matches: "/*" }, { not: { selector_matches: "[download]" } }] }, eagerness: "moderate" }],
+  prefetch: [{ where: { href_matches: "/play" }, eagerness: "eager" }],
+};
 ---
 
 <!doctype html>
@@ -30,6 +40,20 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <link rel="icon" href={logoDark.src} type="image/svg+xml" />
     <Font cssVariable="--serif" preload />
     <Font cssVariable="--stencil" preload />
+    <slot name="head" />
+    <script is:inline type="speculationrules" set:html={JSON.stringify(speculation)} />
+    {/* Elsewhere (Safari, Firefox): on the first sign of heading for /play, fetch its page
+        and engine into the cache. Assets under /_astro/ are cached for good (vercel.json). */}
+    <script is:inline define:vars={{ engineUrl }}>
+      if (!HTMLScriptElement.supports?.("speculationrules") && location.pathname !== "/play") {
+        const warm = (e) => {
+          if (!e.target.closest?.('a[href="/play"]')) return;
+          for (const type of ["pointerover", "touchstart", "focusin"]) removeEventListener(type, warm, true);
+          for (const url of ["/play", engineUrl]) fetch(url, { priority: "low" }).catch(() => {});
+        };
+        for (const type of ["pointerover", "touchstart", "focusin"]) addEventListener(type, warm, { capture: true, passive: true });
+      }
+    </script>
   </head>
   <body>
     <div class="mx-auto max-w-[1120px]">

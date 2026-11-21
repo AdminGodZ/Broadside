@@ -1,5 +1,6 @@
 ---
 import Game from "../components/game/Game.astro";
+import engineUrl from "../components/game/broadside.wasm?url";
 import Base from "../layouts/Base.astro";
 ---
 
@@ -7,5 +8,7 @@ import Base from "../layouts/Base.astro";
   title="Play Broadside"
   description="Play Battleship against the Broadside engine in your browser. It runs entirely on your device; nothing is sent anywhere."
 >
+  {/* The engine downloads alongside the page instead of after the script; game.ts compiles it as it arrives. */}
+  <link slot="head" rel="preload" href={engineUrl} as="fetch" type="application/wasm" crossorigin />
   <Game />
 </Base>

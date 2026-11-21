@@ -32,9 +32,11 @@ html = html.replace(
   `<script>window.BROADSIDE_WASM = "${file(wasm).toString("base64")}";</script>\n<script type="module">${js.replace(/<\/script/gi, "<\\/script")}</script>`,
 );
 
-// Stylesheets inline; font preloads dropped (the fonts are inline now).
+// Stylesheets inline; font and engine preloads dropped (both are inline now).
 html = html.replace(/<link rel="stylesheet" href="(\/_astro\/[^"]+\.css)"\s*\/?>/g, (_, url) => `<style>${inlineAssets(file(url).toString("utf8"))}</style>`);
-html = html.replace(/<link rel="preload"[^>]*as="font"[^>]*>/g, "");
+html = html.replace(/<link rel="preload"[^>]*as="(?:font|fetch)"[^>]*>/g, "");
+// Fetching the site's pages ahead (Base.astro) means nothing in a file opened from disk.
+html = html.replace(/<script\b[^>]*>(?:(?!<\/script>)[\s\S])*<\/script>/g, (tag) => (tag.includes("speculationrules") ? "" : tag));
 html = inlineAssets(html);
 
 // Links back to the site, absolute; a canonical link is meaningless in a local file.

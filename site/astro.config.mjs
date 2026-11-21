@@ -14,6 +14,8 @@ export default defineConfig({
   site: "https://broadside.admingod.ch",
   output: "static",
   devToolbar: { enabled: false },
+  // The stylesheet goes into each page: no request holds up the first paint.
+  build: { inlineStylesheets: "always" },
   fonts: [
     {
       name: "Newsreader",
