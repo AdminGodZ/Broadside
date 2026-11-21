@@ -198,6 +198,8 @@ pub const SHOOTERS: &[&str] = &[
 ];
 pub const PLACERS: &[&str] = &[
     "broadside",
+    "broadside:KEY=N,... (fade, top)",
+    "lateness (the adaptive placer before it hid ship by ship)",
     "equilibrium",
     "uniform",
     "spaced",
@@ -322,7 +324,8 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
             placed: 0,
         }),
         "broadside" => Box::new(placement::AdaptivePlacer::new()),
-        // EXPERIMENT: broadside:fade=PERCENT,top=N.
+        // For tuning: how fast old games fade (percent kept per game) and
+        // how many of the best layouts drawn the placer picks among.
         n if n.starts_with("broadside:") => {
             let mut p = placement::AdaptivePlacer::new();
             for setting in n[10..].split(',') {

@@ -76,7 +76,9 @@ Fire at the likeliest cell until the ships still afloat have few enough joint pl
 engine searches. Each listed placement is a possible world, and a later position is just the subset
 of worlds that agree with the shots since, so whole lines of play are judged by splitting lists,
 with no further inference. The likeliest shots are compared by playing each to the end in every
-world; positions with few worlds left are solved outright.
+world; positions with few worlds left are solved outright. While it hunts with the two-cell ship
+still afloat, its shots keep to a smallest set of cells that touches every place that ship can be
+(<a href="#hunting-the-smallest-ship">below</a>).
 </td></tr>
 <tr><td><b>A certain hit is not always right</b></td><td>
 A cell can be sure to hold a ship while it is unclear which ship. Hitting it changes which later shot
@@ -93,9 +95,11 @@ shooters expecting a tilt, not of Battleship as a whole.)
 <tr><td><b>Learning across a match</b></td><td>
 The shooter learns the opponent's placement habits by model selection (uniform, the tilt family,
 shrunk per-cell occupancy, each scored on predicting the next revealed fleet), so it gains against
-biased placers and loses nothing against uniform ones. The placer tracks where the opponent looks
-last, and a bandit decides how hard to exploit it. Both learn only from what a real game shows: the
-fleet revealed at the end, and the shots actually fired before the game ended.
+biased placers and loses nothing against uniform ones. It also notices an opponent who puts ships
+back where they lay before. The placer records when the opponent's hunting comes to each cell and
+places a fleet whose best-hidden ship would be found latest; a bandit decides between that and the
+equilibrium mix. Both learn only from what a real game shows: the fleet revealed at the end, and the
+shots actually fired before the game ended.
 </td></tr>
 <tr><td><b>How the opponent spaces ships</b></td><td>
 Many players never let ships touch; some stack them on purpose. Every layout is one of three kinds:
@@ -123,10 +127,59 @@ Mean shots to sink a uniformly placed fleet, 100,000 games each unless noted:
 | broadside, search up to 30,000 placements | 44.15 ± 0.03 | 4.6 ms/game |
 | **broadside, default: up to 200,000 placements** | **about 44.04** | 38 ms/game |
 
-The default was measured against the 30,000 setting on the same 20,000 layouts: 0.11 ± 0.04 shots
-better. Times are per game on a 24-core machine running one game per core. Single games swing by
+The two broadside rows were measured before the cover rule ([below](#hunting-the-smallest-ship)),
+which takes another 0.15 to 0.3 shots off them: with it the default needed 43.96 ± 0.13 over 4,000
+games. A full rerun of the table is pending. The default was measured against the 30,000 setting on
+the same 20,000 layouts: 0.11 ± 0.04 shots better. Times are per game on a 24-core machine running one game per core. Single games swing by
 about ±8.6 shots (one standard deviation), so one game between two good players is mostly luck;
 a match is not.
+
+### Hunting the smallest ship
+
+A game lasts until the last ship is found, and 61% of the greedy shooter's games end with a hunt for
+the Destroyer alone. In 20,000 of its games a first hit on the Destroyer saved 6.3 later misses, one
+on a three-cell ship 1.4, on the Battleship 0.4 and on the Carrier 0.25. The likeliest cell treats
+all of these alike.
+
+Finding a two-cell ship is a covering problem: of every place it can still lie in, one of the two
+cells has to be shot. The engine works out which cells belong to a smallest set that does this (a
+minimum vertex cover, found by bipartite matching) and, while no hit is open, counts those cells as
+10 points likelier to be a hit than they are. On an open board the set is one colour of a
+checkerboard; on a board full of holes it is the exact answer for what is left. The search plays its
+lines the same way. Because the bonus is a fixed amount, a cell that a learned belief makes far
+likelier than the rest is still shot first.
+
+Shots saved per game against the same engine without the rule, on the same layouts:
+
+| Search | Opponent's placement | Shots saved | Games |
+|---|---|---:|---:|
+| none | random | 0.36 ± 0.03 * | 100,000 |
+| up to 3,000 placements | random | 0.30 ± 0.04 | 30,000 |
+| up to 30,000 placements | random | 0.16 ± 0.04 * | 40,000 |
+| default, up to 200,000 | random | 0.21 ± 0.12 | 4,000 |
+| default, up to 200,000 | random | 0.14 ± 0.06 * | 12,000 |
+| up to 3,000, learning over matches of 20 | the engine's own mix (`equilibrium`) | 0.24 ± 0.10 | 6,000 |
+| up to 3,000, learning over matches of 20 | the engine's own mix (`equilibrium`) | 0.26 ± 0.06 * | 20,000 |
+| up to 3,000, learning over matches of 12 | a new fleet every 3 games (`repeat3`) | 0.15 ± 0.04 * | 12,000 |
+
+<sub>`broadside compare "broadside:exact=3000" "broadside:exact=3000,cover=0" --games 30000 --seed 303`.
+Rows marked * were measured with earlier forms of the rule (only cover cells are shot, or their
+chance is doubled). On the same 30,000 layouts the doubling form and the present one differ by
+0.002 shots.</sub>
+
+### Opponents who reuse a fleet
+
+The play page offers a player's last fleet again, and people keep one they like. Per ship, the engine
+counts where it lay in earlier games (recent games count more) and trusts those counts only as far
+as they have predicted the next fleet better than assuming nothing. Shots saved per game against the
+same engine without the model, search up to 3,000 placements:
+
+| The opponent's fleets | Engine default | Play page (starts at a 20% belief) |
+|---|---:|---:|
+| a new fleet every 3 games (`repeat3`, matches of 12) | 4.91 ± 0.09 | 6.10 ± 0.11 |
+| one fleet for the whole match (`repeat`, matches of 6) | 0.43 ± 0.02 | 2.77 ± 0.10 |
+| random placement (`uniform`, matches of 10) | 0.00 ± 0.03 | 0.01 ± 0.03 |
+| the engine's own placement mix (`equilibrium`, matches of 10) | 0.00 ± 0.03 | −0.06 ± 0.03 |
 
 ### Opponents with a spacing habit
 
@@ -201,6 +254,27 @@ from `assets/data/duel-parity.csv`.</sub>
 
 </details>
 
+### Hiding the fleet
+
+Broadside (search up to 3,000 placements) against the density bot, which places at random. Only
+Broadside's placement differs between the rows:
+
+| Broadside places | Wins, matches of 100 | Density needs | Wins, matches of 10 |
+|---|---:|---:|---:|
+| **hiding ship by ship (default)** | **82.7% ± 0.4** | 55.6 shots | 67.8% ± 0.5 |
+| every cell tilted toward where the opponent looks late (`lateness`, the earlier default) | 64.3% ± 0.4 | 48.9 shots | 58.6% ± 0.5 |
+| at random | 50.9% ± 0.5 | 44.8 shots | |
+
+Against an exact shooter that does not learn, over matches of 20, hiding wins 67.1% ± 0.6 and the
+earlier placer 60.4% ± 0.6.
+
+Broadside against itself, both sides learning, differing only in placement: over matches of 10 the
+hiding side wins 59.9% ± 0.7 against the earlier placer, and the shooter needs 49.5 shots against it
+instead of 46.8. Over matches of 100 the learning shooter catches up: the hiding side wins 48.4% ±
+0.7 against the earlier placer (46.8 against 47.2 shots) and 56.4% ± 0.6 against the equilibrium mix
+(46.8 against 44.9). So in self-play each side needs about 47 shots, not 44: the placers gain more
+than the shooters' learning takes back.
+
 <details>
 <summary><b>Head-to-head matches</b> (older measurements)</summary>
 
@@ -225,7 +299,7 @@ have fired, also after the game was over. A rerun under the current rules is pen
 broadside play [--heat]          # you vs the engine; --heat shows its read of your fleet
 broadside assist                 # engine advises shots vs any opponent; you report results
 broadside sim --shooter S --placer P --games N     # shots-to-win statistics (--dump FILE: every game as CSV)
-broadside compare A B [--placer P]                 # two shooters on the same layouts, game by game
+broadside compare A [A2 ...] B [--placer P]        # shooters on the same layouts, each against the last
                                                    #   (sim and compare take --match N: the players
                                                    #   keep what they learned for N games)
 broadside duel A B [--placer-a P] [--placer-b P]   # head-to-head win rate (--match N: both sides learn;
@@ -240,12 +314,14 @@ Run with `cargo run --release -p broadside -- <command>`.
 
 - **Shooters:** `broadside`, `greedy`, `density`, `NAME@tiltA`, `parity`, `hunt-target`, `random`, and
   `broadside:KEY=N,...` to tune the search (`exact`, `cands`, `solve`, `nodes`, `deep`, `afloat`,
-  `samples`, `race`, `spread`; see `Search` in `crates/core/src/ai/engine.rs`) or its starting belief
-  about the opponent's spacing (`apart`, `corners` in percent, `weight` in tenths of a game).
+  `samples`, `last`, `race`, `spread`, `cover`; see `Search` in `crates/core/src/ai/engine.rs`) or its
+  starting beliefs about the opponent: spacing (`apart`, `corners` in percent, `weight` in tenths of
+  a game) and reusing fleets (`repeats` in thousandths).
 - **Placers:** `broadside`, `equilibrium`, `uniform`, `tiltA`, `mix:A=P,...`, and for testing the
   spacing belief `spaced` (no ships touch), `clumped` (every ship lies against another), `swapN`
   (spaced and clumped in turn, N games each) and `contrary` (always the kind of fleet the engine
-  expects least).
+  expects least); `repeat` and `repeatN` (one fleet for the whole match, or a new one every N
+  games); `lateness` (the adaptive placer before it hid ship by ship).
 - **Tests:** `cargo test`, slow ones with `cargo test --release -- --ignored`.
 
 ## Project layout
@@ -284,6 +360,13 @@ it with `cd site && npm install && npm run dev`. The games replayed on the landi
 - [x] WebAssembly build and a browser UI
 - [x] Opponents who keep ships apart, or stack them: exact counts per kind of layout, a learned
       belief that an opponent cannot milk
+- [x] Hunting on a smallest cover of the Destroyer's places; a placer that hides ship by ship; a
+      model of opponents who reuse a fleet
+- [ ] The hiding placer over long matches against a shooter that learns (see "Hiding the fleet")
+- [ ] Counting a hit by the ship it finds: with the cover rule and search up to 3,000 placements,
+      weighting the Destroyer five times and the three-cell ships one and a half times saved a
+      further 0.07 ± 0.05 shots, and a small cover bonus while finishing a ship 0.03 ± 0.04. Not
+      settled either way
 - [ ] An exact prior-weighted posterior before the search starts
 - [ ] A shooter that tracks a mixed placer within a game
 - [ ] Tests against outside engines and human players
