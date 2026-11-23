@@ -1,9 +1,8 @@
 ---
-import logoDark from "../../../assets/logo-dark.svg";
-import logoLight from "../../../assets/logo-light.svg";
 import { REPO } from "../lib/site";
 import ExternalLink from "./ExternalLink.astro";
 import GithubIcon from "./GithubIcon.astro";
+import Logo from "./Logo.astro";
 
 const link = "text-ink-soft no-underline hover:text-ink hover:underline";
 ---
@@ -11,8 +10,7 @@ const link = "text-ink-soft no-underline hover:text-ink hover:underline";
 {/* min-h-header: the hero fills the rest of the first screen. */}
 <header class="flex min-h-header flex-wrap items-center justify-between gap-x-8 gap-y-2.5 border-b border-rule py-5">
   <a class="flex items-center gap-2.5 font-stencil text-[1.35rem] leading-none no-underline" href="/">
-    <img class="hidden dark:block" src={logoDark.src} alt="" width="30" height="30" />
-    <img class="dark:hidden" src={logoLight.src} alt="" width="30" height="30" />
+    <Logo size={30} />
     Broadside
   </a>
   <nav aria-label="Main" class="flex flex-wrap gap-x-[26px] gap-y-1">

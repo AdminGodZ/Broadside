@@ -1,5 +1,6 @@
 ---
 import { Font } from "astro:assets";
+import "../fonts/stencil.css";
 import "../styles/global.css";
 import logoDark from "../../../assets/logo-dark.svg";
 import engineUrl from "../components/game/broadside.wasm?url";
@@ -9,9 +10,12 @@ import Header from "../components/Header.astro";
 interface Props {
   title: string;
   description: string;
+  /** Whether the page sets italic text, so its font is fetched with the page. */
+  italic?: boolean;
 }
-const { title, description } = Astro.props;
-const canonical = new URL(Astro.url.pathname, Astro.site);
+const { title, description, italic = false } = Astro.props;
+// The site's addresses have no trailing slash (vercel.json); /play/ would redirect.
+const canonical = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), Astro.site);
 
 // Following a link should feel instant. Chromium browsers prerender a page of the
 // site once the pointer rests on a link to it (or the finger goes down), script
@@ -38,8 +42,34 @@ const speculation = {
     <meta name="theme-color" content="#eff1ec" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0e1b2c" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href={logoDark.src} type="image/svg+xml" />
-    <Font cssVariable="--serif" preload />
-    <Font cssVariable="--stencil" preload />
+    <Font cssVariable="--serif" preload={italic || [{ style: "normal" }]} />
+    {/* The page shows once Newsreader is in, in one piece, so nothing moves as it arrives: laid out
+        in a fallback first, text would wrap differently and push what's below. It's preloaded and
+        small, so that's normally with the page itself. Should it take longer than 0.6 s (or never
+        come: fonts blocked), the page shows in the metric-matched fallback and keeps it. A page
+        prerendered ahead (see below) starts counting when it's shown. Only this script hides the
+        page, and the timer is set first, so nothing can keep it hidden. */}
+    <script is:inline>
+      (() => {
+        const root = document.documentElement;
+        const serif = getComputedStyle(root).getPropertyValue("--serif");
+        const font = `1em ${serif.split(",")[0]}`;
+        let waiting = true;
+        const show = () => {
+          if (!waiting) return;
+          waiting = false;
+          root.classList.remove("fonts-wait");
+          try {
+            if (!document.fonts.check(font)) root.style.setProperty("--serif", serif.slice(serif.indexOf(",") + 1));
+          } catch {}
+        };
+        root.classList.add("fonts-wait");
+        const limit = () => setTimeout(show, 600);
+        if (document.prerendering) document.addEventListener("prerenderingchange", limit, { once: true });
+        else limit();
+        document.fonts.load(font).then(show, show);
+      })();
+    </script>
     <slot name="head" />
     <script is:inline type="speculationrules" set:html={JSON.stringify(speculation)} />
     {/* Elsewhere (Safari, Firefox): on the first sign of heading for /play, fetch its page

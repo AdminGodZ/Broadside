@@ -21,5 +21,7 @@ export const SYSTEMS = [
   { id: "linux-arm", name: "Linux, ARM", button: "Download for Linux", kind: "monitor", url: `${LATEST}/broadside-aarch64-unknown-linux-gnu.tar.gz` },
 ] as const;
 
-/** The play page as one self-contained file (scripts/offline.mjs), served by the site itself. */
-export const OFFLINE_GAME = "/broadside.html";
+/** The play page as one self-contained file (scripts/offline.mjs), served by the site itself:
+ * dist/broadside.html, at /broadside without the extension (vercel.json's cleanUrls; the
+ * .html address redirects there). Links set download="broadside.html" for the saved name. */
+export const OFFLINE_GAME = "/broadside";

@@ -2,3 +2,4 @@ node_modules/
 dist/
 .astro/
 src/components/game/broadside.wasm
+src/fonts/

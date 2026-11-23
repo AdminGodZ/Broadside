@@ -1,13 +1,24 @@
 ---
 // The engine replaying real games it played (src/data/games.json, recorded by
-// `cargo run --release -p broadside-core --example record_games`).
+// `cargo run --release -p broadside-core --example record_games`). The empty board
+// is drawn here, so it's in the page at the first paint; the script plays on it.
+const lines = Array.from({ length: 9 }, (_, i) => (i + 1) * 10);
 ---
 
 <figure class="m-0 w-full max-w-[470px] justify-self-center" aria-label="The engine replaying one of its real games: shots, hits and sunk ships appear on a 10 by 10 board.">
-  <svg id="board" class="block h-auto w-full overflow-visible" viewBox="-8 -8 110 110" role="presentation"></svg>
+  <svg id="board" class="block h-auto w-full overflow-visible" viewBox="-8 -8 110 110" role="presentation">
+    <rect class="sea" x="0" y="0" width="100" height="100" rx="1"></rect>
+    {lines.map((v) => <line class="gridline" x1={v} y1="0" x2={v} y2="100" />)}
+    {lines.map((v) => <line class="gridline" x1="0" y1={v} x2="100" y2={v} />)}
+    {Array.from({ length: 10 }, (_, i) => <text class="coord" x={i * 10 + 5} y="-4">{i + 1}</text>)}
+    {[..."ABCDEFGHIJ"].map((row, i) => <text class="coord" x="-4" y={i * 10 + 5}>{row}</text>)}
+    <g class="ships"></g>
+    <g class="shots"></g>
+  </svg>
   <figcaption class="mt-3 flex flex-wrap justify-between gap-x-4 gap-y-0.5 text-[.95rem] text-ink-soft italic">
     <span>A real game by the engine, replayed.</span>
-    <span id="replay-status" class="text-ink not-italic tabular-nums"></span>
+    {/* Two digits' room for the count (games here take under 100 shots), so going from 9 to 10 moves nothing. */}
+    <span class="text-ink not-italic tabular-nums">Shot <span id="replay-shot" class="inline-block min-w-[2ch]">0</span></span>
   </figcaption>
 </figure>
 
@@ -30,19 +41,6 @@
   // Cell index = row * 10 + col; rows are A-J, columns 1-10, as in the engine.
   const cx = (cell: number) => (cell % 10) * 10 + 5;
   const cy = (cell: number) => Math.floor(cell / 10) * 10 + 5;
-
-  function drawSea(svg: SVGSVGElement) {
-    el("rect", { class: "sea", x: 0, y: 0, width: 100, height: 100, rx: 1 }, svg);
-    for (let i = 1; i < 10; i++) {
-      el("line", { class: "gridline", x1: i * 10, y1: 0, x2: i * 10, y2: 100 }, svg);
-      el("line", { class: "gridline", x1: 0, y1: i * 10, x2: 100, y2: i * 10 }, svg);
-    }
-    for (let i = 0; i < 10; i++) {
-      el("text", { class: "coord", x: i * 10 + 5, y: -4 }, svg).textContent = String(i + 1);
-      el("text", { class: "coord", x: -4, y: i * 10 + 5 }, svg).textContent = "ABCDEFGHIJ"[i];
-    }
-    return { ships: el("g", { class: "ships" }, svg), shots: el("g", { class: "shots" }, svg) };
-  }
 
   function drawShip(layer: Element, cells: number[]) {
     const xs = cells.map((c) => c % 10);
@@ -82,14 +80,16 @@
 
   async function start() {
     const svg = document.querySelector<SVGSVGElement>("#board");
-    const status = document.querySelector<HTMLElement>("#replay-status");
-    if (!svg || !status) return;
-    const layers = drawSea(svg);
+    const status = document.querySelector<HTMLElement>("#replay-shot");
+    const ships = svg?.querySelector(".ships");
+    const shots = svg?.querySelector(".shots");
+    if (!svg || !status || !ships || !shots) return;
+    const layers = { ships, shots };
     const all = games as Game[];
 
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
       render(layers, all[0]);
-      status.textContent = `Shot ${all[0].shots.length}`;
+      status.textContent = String(all[0].shots.length);
       return;
     }
 
@@ -105,14 +105,14 @@
       layers.ships.classList.remove("fading");
       layers.shots.classList.remove("fading");
       render(layers, game, 0);
-      status.textContent = "Shot 0";
+      status.textContent = "0";
       for (let i = 1; i <= game.shots.length; i++) {
         await wait(SHOT_MS);
         await whileVisible();
         render(layers, game, i);
         const cell = game.shots[i - 1];
         el("circle", { class: "latest", cx: cx(cell), cy: cy(cell), r: 4 }, layers.shots);
-        status.textContent = `Shot ${i}`; // the count only, not which ships are down
+        status.textContent = String(i); // the count only, not which ships are down
       }
       await wait(HOLD_MS);
       layers.ships.classList.add("fading");
