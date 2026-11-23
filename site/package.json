@@ -26,6 +26,7 @@
     "@astrojs/check": "^0.9.12",
     "@tailwindcss/vite": "^4.3.5",
     "@types/node": "^26.6.6",
+    "subset-font": "^2.9.0",
     "tailwindcss": "^4.3.5",
     "typescript": "^6.0.3"
   }

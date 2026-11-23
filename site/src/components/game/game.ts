@@ -8,8 +8,6 @@ import { SHIPS, TEXT, cellName as name } from "./shared";
 
 interface Engine {
   bs_new_game(seed: number): void;
-  bs_random_fleet(): void;
-  bs_offer_slot(ship: number): number;
   bs_set_fleet(a: number, b: number, c: number, d: number, e: number): number;
   bs_player_fire(cell: number): number;
   bs_player_won(): number;
@@ -36,6 +34,26 @@ function cellsOf(len: number, slot: number): number[] | null {
   return Array.from({ length: len }, (_, k) => start + (vertical ? 10 * k : k));
 }
 const placed = (len: number, slot: number) => cellsOf(len, slot) as number[]; // slots in the fleet are valid
+/** A random legal fleet, drawn as the engine's Layout::random does (uniform over all fleets), so it needs no engine. */
+function randomSlots(): number[] {
+  for (;;) {
+    const taken = new Set<number>();
+    let clear = true;
+    const slots = SHIPS.map(([, len]) => {
+      let slot: number, cells: number[] | null;
+      do {
+        slot = Math.floor(Math.random() * 200);
+        cells = cellsOf(len, slot);
+      } while (!cells);
+      for (const c of cells) {
+        if (taken.has(c)) clear = false;
+        taken.add(c);
+      }
+      return slot;
+    });
+    if (clear) return slots;
+  }
+}
 const newSide = (): Side => ({ shots: new Map(), sunk: [], count: 0, last: null, fresh: null });
 
 let E: Engine;
@@ -114,8 +132,7 @@ function placeAt(cell: number) {
   }
 }
 function randomFleet() {
-  E.bs_random_fleet();
-  S.fleet = SHIPS.map((_, s) => E.bs_offer_slot(s));
+  S.fleet = randomSlots();
   S.selected = null;
   S.fresh = "all";
   note(TEXT.random);
@@ -225,9 +242,15 @@ function newGame() {
 let flashTimer: ReturnType<typeof setTimeout> | undefined;
 let notice: string | null = null;
 const note = (text: string | null) => (notice = text);
-const sub = (text: string) => el("span", { className: "msg-sub", textContent: text });
+/** The status line: a heading and a line under it. Left as it is when they haven't changed,
+ * so the line Game.astro wrote before the first paint stays (redrawn, it would count as a late paint). */
+function say(head: string, line: string) {
+  const msg = $("msg");
+  if (msg.childNodes.length === 2 && msg.textContent === head + line) return;
+  msg.replaceChildren(head, el("span", { className: "msg-sub", textContent: line }));
+}
 function flash(text: string) {
-  $("msg").replaceChildren(text, sub(KEYS ? "Try another cell, or turn it with R." : "Try another cell, or turn it."));
+  say(text, KEYS ? "Try another cell, or turn it with R." : "Try another cell, or turn it.");
   clearTimeout(flashTimer);
   flashTimer = setTimeout(render, 1800);
 }
@@ -370,7 +393,6 @@ function render() {
     : `engine: ${S.it.count} shot${S.it.count === 1 ? "" : "s"}`;
 
   // Status line and actions
-  const msg = $("msg");
   $("resign").hidden = S.phase !== "battle";
   $("new-game").hidden = S.phase !== "over";
   if (placing) {
@@ -378,13 +400,14 @@ function render() {
     if (S.selected !== null) {
       const [n, len] = SHIPS[S.selected];
       const turn = KEYS ? "Press R to turn it." : "Turn it with Across or Down.";
-      msg.replaceChildren(S.fleet[S.selected] === null ? `Place your ${n}` : `Move your ${n}`, sub(notice ?? `${len} cells, ${S.vertical ? "down" : "across"}. ${turn}`));
-    } else msg.replaceChildren(ready ? TEXT.ready : "Place your fleet", sub(notice ?? TEXT.moveOn));
+      say(S.fleet[S.selected] === null ? `Place your ${n}` : `Move your ${n}`, notice ?? `${len} cells, ${S.vertical ? "down" : "across"}. ${turn}`);
+    } else say(ready ? TEXT.ready : "Place your fleet", notice ?? TEXT.moveOn);
     notice = null;
   } else if (S.phase === "battle") {
-    msg.replaceChildren(...(S.thinking ? ["The engine is aiming…", sub("It weighs every fleet that could be hiding.")] : ["Your shot", sub("Pick a cell in enemy waters.")]));
+    if (S.thinking) say("The engine is aiming…", "It weighs every fleet that could be hiding.");
+    else say("Your shot", "Pick a cell in enemy waters.");
   } else if (S.phase === "over") {
-    msg.replaceChildren("Game over", sub("Your fleet stays where it was for the next game."));
+    say("Game over", "Your fleet stays where it was for the next game.");
   }
   $("rec-w").textContent = String(S.record.w);
   $("rec-l").textContent = String(S.record.l);
@@ -397,8 +420,17 @@ async function loadEngine(): Promise<Engine> {
   // The offline single-file version (scripts/offline.mjs) carries the engine inline.
   const inline = (window as { BROADSIDE_WASM?: string }).BROADSIDE_WASM;
   if (inline) return (await WebAssembly.instantiate(Uint8Array.from(atob(inline), (ch) => ch.charCodeAt(0)), {})).instance.exports as unknown as Engine;
-  // Compiled while it downloads (the page preloads it, see play.astro). A server that
-  // sends the wrong content type makes that fail; then the bytes come from the cache.
+  // Placing the fleet doesn't need the engine, only starting the battle does: it downloads once
+  // the page is complete and drawn, so the font and this script, which the first view needs,
+  // don't share the connection with it. (The next frame, or 0.1 s where no frames are drawn:
+  // a hidden tab, or a page prerendered ahead, see Base.astro, which has it by the time it shows.)
+  if (document.readyState !== "complete") await new Promise((done) => addEventListener("load", done, { once: true }));
+  await new Promise((done) => {
+    requestAnimationFrame(() => setTimeout(done));
+    setTimeout(done, 100);
+  });
+  // Compiled while it downloads. A server that sends the wrong content type makes that
+  // fail; then the bytes come from the cache.
   let instance: WebAssembly.Instance;
   try {
     ({ instance } = await WebAssembly.instantiateStreaming(fetch(wasmUrl), {}));
@@ -410,7 +442,7 @@ async function loadEngine(): Promise<Engine> {
 
 export function start() {
   const engine = loadEngine();
-  // Random fleet and Start battle need the engine; pressed before it is there, they wait for it.
+  // Start battle needs the engine; pressed before it is there, it waits for it.
   const withEngine = (f: () => void) => () => (E ? f() : engine.then(f, () => {}));
   target = chart($("target"), (i, kind) => {
     if (kind === "click" && i !== null) playerFire(i);
@@ -435,21 +467,21 @@ export function start() {
   });
   $("dir-h").addEventListener("click", () => setVertical(false));
   $("dir-v").addEventListener("click", () => setVertical(true));
-  $("random").addEventListener("click", withEngine(randomFleet));
+  $("random").addEventListener("click", randomFleet);
   $("clear").addEventListener("click", clearFleet);
   $("start").addEventListener("click", withEngine(startBattle));
   $("resign").addEventListener("click", () => finish(false));
   $("new-game").addEventListener("click", newGame);
   $("heat").addEventListener("change", render);
 
-  // A saved fleet needs no engine to be shown or moved: placing starts now.
+  // Placing needs no engine: the saved fleet, or a random one, is on the chart now.
   const saved = savedFleet();
+  S.phase = "placing";
   if (saved) {
-    S.phase = "placing";
     S.fleet = saved;
     note(TEXT.saved);
     render();
-  }
+  } else randomFleet();
   engine.then(
     (e) => {
       E = e;

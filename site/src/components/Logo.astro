@@ -1,0 +1,34 @@
+---
+// The logo (assets/logo-light.svg and logo-dark.svg) drawn inline in the site's
+// colours, so it's in the page at the first paint, in either colour scheme.
+interface Props {
+  size: number;
+}
+const { size } = Astro.props;
+---
+
+<svg viewBox="0 0 512 512" width={size} height={size} aria-hidden="true" class="flex-none">
+  <defs><clipPath id="logo-tile"><rect x="16" y="16" width="480" height="480" rx="104"></rect></clipPath></defs>
+  <rect x="16" y="16" width="480" height="480" rx="104" style="fill:var(--water)"></rect>
+  <path
+    d="M42.67 16V496M96 16V496M149.33 16V496M202.67 16V496M256 16V496M309.33 16V496M362.67 16V496M416 16V496M469.33 16V496M16 16H496M16 69.33H496M16 122.67H496M16 176H496M16 229.33H496M16 282.67H496M16 336H496M16 389.33H496M16 442.67H496"
+    style="stroke:var(--rule)"
+    stroke-width="3"
+    clip-path="url(#logo-tile)"></path>
+  <g style="fill:var(--ink)">
+    <rect x="153.07" y="73.07" width="45.87" height="365.87" rx="10.67"></rect>
+    <rect x="206.4" y="73.07" width="99.2" height="45.87" rx="10.67"></rect>
+    <rect x="206.4" y="233.07" width="99.2" height="45.87" rx="10.67"></rect>
+    <rect x="206.4" y="393.07" width="99.2" height="45.87" rx="10.67"></rect>
+    <rect x="313.07" y="126.4" width="45.87" height="99.2" rx="10.67"></rect>
+    <rect x="313.07" y="286.4" width="45.87" height="99.2" rx="10.67"></rect>
+  </g>
+  <g style="stroke:var(--water)">
+    <path
+      d="M153.07 122.67H198.93M153.07 176H198.93M153.07 229.33H198.93M153.07 282.67H198.93M153.07 336H198.93M153.07 389.33H198.93M256 73.07V118.93M256 233.07V278.93M256 393.07V438.93M313.07 176H358.93M313.07 336H358.93"
+      stroke-width="2.67"></path>
+    <path d="M324.27 137.6L347.73 161.07M324.27 161.07L347.73 137.6" stroke-width="16" stroke-linecap="round"></path>
+  </g>
+  <path d="M324.27 137.6L347.73 161.07M324.27 161.07L347.73 137.6" style="stroke:var(--hit)" stroke-width="8" stroke-linecap="round"></path>
+  <rect x="21" y="21" width="470" height="470" rx="99" fill="none" style="stroke:var(--ink)" stroke-width="10"></rect>
+</svg>
