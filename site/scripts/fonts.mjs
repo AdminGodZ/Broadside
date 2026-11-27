@@ -22,7 +22,7 @@ const SAIRA = join(SITE, "node_modules/@fontsource/saira-stencil-one/files/saira
 // set still shows, in the fallback face; add it here if the text needs it.
 let ascii = "";
 for (let c = 0x20; c < 0x7f; c++) ascii += String.fromCharCode(c);
-const TEXT = `${ascii}–—‘’“”…×•·✓`;
+const TEXT = `${ascii}–—‘’“”…×•·`; // no ✓: Newsreader has none (the game draws its ticks)
 const STENCIL_TEXT = "Broadside";
 
 /** CSS unicode-range for a set of characters, so browsers know what each file covers. */
