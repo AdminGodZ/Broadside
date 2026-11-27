@@ -6,7 +6,7 @@
 // status line), so nothing moves when the script and the engine arrive.
 import Button from "../Button.astro";
 import Chart from "./Chart.astro";
-import { SHIPS, TEXT } from "./shared";
+import { ROWS, SHIPS, TEXT } from "./shared";
 
 const head = "flex items-baseline justify-between gap-3";
 const sub = "text-[.95rem] text-ink-soft tabular-nums";
@@ -16,20 +16,6 @@ const tally = "m-0 flex list-none flex-wrap gap-x-3.5 gap-y-1.5 p-0 text-[.95rem
 <div class="game placing pb-4">
   <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 pt-7 pb-6 lg:min-h-[116px]">
     <p id="msg" class="m-0 text-[1.35rem] leading-snug font-medium" aria-live="polite">Loading the engine…</p>
-    {/* Before the first paint, the line that comes with the fleet game.ts puts on the chart:
-        a returning player's saved fleet, or else a random one (neither waits for the engine). */}
-    <script is:inline define:vars={{ TEXT }}>
-      const msg = document.getElementById("msg"), sub = document.createElement("span");
-      let saved = null;
-      try {
-        saved = JSON.parse(localStorage.getItem("broadside.fleet") ?? "null");
-      } catch {}
-      const isSaved = Array.isArray(saved) && saved.length === 5 && saved.every((x) => Number.isInteger(x));
-      msg.textContent = TEXT.ready;
-      sub.className = "msg-sub";
-      sub.textContent = isSaved ? TEXT.saved : TEXT.random;
-      msg.append(sub);
-    </script>
     <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
       <dl class="m-0 flex gap-5 text-[.95rem] text-ink-soft" aria-label="This session">
         <div class="flex items-baseline gap-1.5"><dt>you</dt><dd id="rec-w" class="-order-1 m-0 text-lg font-semibold text-ink tabular-nums">0</dd></div>
@@ -88,6 +74,56 @@ const tally = "m-0 flex list-none flex-wrap gap-x-3.5 gap-y-1.5 p-0 text-[.95rem
       <p class="m-0 text-[.95rem] text-ink-soft" id="dock-hint">{TEXT.pickHint}</p>
       <Button id="start" primary disabled class="w-full justify-center py-4 text-lg">Start battle</Button>
     </aside>
+    {/* Before the first paint, the fleet game.ts would put on the chart, drawn as it draws it: a
+        returning player's saved fleet, or else a random one (neither waits for the engine). So the
+        ships are in the first frame even when the script comes a round trip after the page (its
+        first visit, or after a release). game.ts takes the fleet over from #home's data-fleet. */}
+    <script is:inline define:vars={{ TEXT, SHIPS, ROWS }}>
+      const $ = (id) => document.getElementById(id);
+      const name = (c) => ROWS[Math.floor(c / 10)] + ((c % 10) + 1);
+      const cellsOf = (len, slot) => {
+        const start = slot >> 1, vertical = slot & 1, r = Math.floor(start / 10), c = start % 10;
+        if (vertical ? r + len > 10 : c + len > 10) return null;
+        return Array.from({ length: len }, (_, k) => start + (vertical ? 10 * k : k));
+      };
+      let fleet = null;
+      try {
+        fleet = JSON.parse(localStorage.getItem("broadside.fleet") ?? "null");
+      } catch {}
+      const saved = Array.isArray(fleet) && fleet.length === 5 && fleet.every((x) => Number.isInteger(x));
+      // As game.ts's randomSlots: uniform over all fleets.
+      while (!saved) {
+        const taken = new Set();
+        fleet = SHIPS.map(([, len]) => {
+          let slot, cells;
+          do cells = cellsOf(len, (slot = Math.floor(Math.random() * 200)));
+          while (!cells);
+          for (const c of cells) taken.add(c);
+          return slot;
+        });
+        if (taken.size === 17) break;
+      }
+      const home = $("home"), layer = home.querySelector(".layer"), shipRows = $("dock-ships").querySelectorAll(".ship-row");
+      home.dataset.fleet = JSON.stringify({ fleet, saved });
+      fleet.forEach((slot, s) => {
+        const len = SHIPS[s][1], cells = cellsOf(len, slot), start = slot >> 1, v = slot & 1;
+        const hull = document.createElement("div");
+        hull.className = "hull movable";
+        hull.style.cssText = `left:${(start % 10) * 10}%;top:${Math.floor(start / 10) * 10}%;width:${(v ? 1 : len) * 10}%;height:${(v ? len : 1) * 10}%`;
+        layer.append(hull);
+        shipRows[s].classList.add("placed");
+        if (cells) shipRows[s].querySelector(".where").textContent = `${name(cells[0])}–${name(cells[len - 1])}`;
+      });
+      $("it-shots").textContent = "5 of 5 placed";
+      // Ready to start; pressed before game.ts is in, it notes that, and game.ts starts the battle.
+      $("start").disabled = false;
+      $("start").addEventListener("click", (e) => (e.currentTarget.dataset.pressed = "1"), { once: true });
+      const msg = $("msg"), sub = document.createElement("span");
+      msg.textContent = TEXT.ready;
+      sub.className = "msg-sub";
+      sub.textContent = saved ? TEXT.saved : TEXT.random;
+      msg.append(sub);
+    </script>
   </div>
 
   <section class="mt-9" id="log-box" aria-labelledby="log-title" hidden>
@@ -210,7 +246,12 @@ const tally = "m-0 flex list-none flex-wrap gap-x-3.5 gap-y-1.5 p-0 text-[.95rem
   .game .ship-row .where { font-size: .95rem; color: var(--color-ink-soft); font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px; }
   .game .ship-row.placed .shape i { background: color-mix(in oklab, var(--color-ink) 20%, transparent); border-color: var(--color-ink); }
   .game .ship-row.placed .where { color: var(--color-good); }
-  .game .ship-row.placed .where::before { content: "✓"; font-weight: 600; }
+  /* The tick is drawn, not typed: Newsreader has no ✓, and finding one among the system's fonts
+     held up the first frame by a layout's worth (50 ms on a slow phone). */
+  .game .ship-row.placed .where::before {
+    content: ""; width: .85em; height: .85em; background: currentColor;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
   .game .ship-row.sel { border-color: var(--color-mark); background: color-mix(in oklab, var(--color-mark) 12%, transparent); box-shadow: 0 0 0 1px var(--color-mark); }
   .game .ship-row.sel .shape i { border-color: var(--color-mark); background: color-mix(in oklab, var(--color-mark) 30%, transparent); }
   .game .ship-row.sel .where { color: var(--color-ink); }

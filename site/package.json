@@ -13,7 +13,8 @@
     "build": "astro build",
     "postbuild": "node scripts/offline.mjs",
     "preview": "astro preview",
-    "check": "astro check"
+    "check": "astro check",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@fontsource-variable/newsreader": "^5.3.0",
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.12",
+    "@playwright/test": "1.65.1",
     "@tailwindcss/vite": "^4.3.5",
     "@types/node": "^26.6.6",
     "subset-font": "^2.9.0",

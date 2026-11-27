@@ -490,12 +490,14 @@ export function start() {
     render();
   });
 
-  // Placing needs no engine: the saved fleet, or a random one, is on the chart now.
-  const saved = savedFleet();
+  // Placing needs no engine: the fleet the page drew before its first paint (Game.astro), the
+  // saved one or a random one, is on the chart already; it's taken over as it is.
   S.phase = "placing";
-  if (saved) {
-    S.fleet = saved;
-    note(TEXT.saved);
+  const drawn = JSON.parse($("home").dataset.fleet ?? "null") as { fleet: number[]; saved: boolean } | null;
+  const saved = drawn ? null : savedFleet();
+  if (drawn || saved) {
+    S.fleet = drawn?.fleet ?? saved!;
+    note(drawn && !drawn.saved ? TEXT.random : TEXT.saved);
     render();
   } else randomFleet();
   engine.then(
@@ -506,6 +508,9 @@ export function start() {
     },
     (err: Error) => stopped(`The engine could not start: ${err.message}.`),
   );
+  // Start battle, pressed before this script was in (Game.astro notes it). After the engine's
+  // handler above, so the battle starts once the engine is in and has begun its game.
+  if ($("start").dataset.pressed) withEngine(startBattle)();
 }
 /** The engine is out: the game stops, with the reason in place of the status line. */
 function stopped(why: string) {

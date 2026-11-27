@@ -274,7 +274,8 @@ The core has no dependencies.
 
 The website deploys from `main` on every push: Vercel runs `site/vercel-build.sh`, which installs Rust
 and builds the Astro site in `site/` (its `prebuild` step builds the browser game into `/play`). Work on
-it with `cd site && npm install && npm run dev`. The games replayed on the landing page come from
+it with `cd site && npm install && npm run dev`. `npm run test:e2e` plays the built site end to end
+(Playwright, in Chromium, WebKit, Firefox and a phone; CI runs it on every pull request). The games replayed on the landing page come from
 `cargo run --release -p broadside-core --example record_games > site/src/data/games.json`.
 
 ## Roadmap
