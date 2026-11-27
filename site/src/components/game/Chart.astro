@@ -12,12 +12,16 @@ interface Props {
 }
 const { id, class: className, disabled = false } = Astro.props;
 const cells = Array.from({ length: 100 }, (_, i) => cellName(i));
+// The row letters go down the first column, under the corner. Classes written out in full (Tailwind
+// only finds whole names), and classes rather than a style attribute, which the site's policy
+// (scripts/csp.mjs) doesn't allow.
+const ROW_START = ["row-start-2", "row-start-3", "row-start-4", "row-start-5", "row-start-6", "row-start-7", "row-start-8", "row-start-9", "row-start-10", "row-start-11"];
 ---
 
 <div class:list={["chart", className]} id={id}>
   <span class="axis"></span>
   {Array.from({ length: 10 }, (_, c) => <span class="axis">{c + 1}</span>)}
-  {[...ROWS].map((r, i) => <span class="axis" style={`grid-column:1;grid-row:${i + 2}`}>{r}</span>)}
+  {[...ROWS].map((r, i) => <span class:list={["axis col-start-1", ROW_START[i]]}>{r}</span>)}
   <div class="sea">
     <div class="layer"></div>
     {cells.map((label) => <button class="cell" type="button" aria-label={label} disabled={disabled}></button>)}
