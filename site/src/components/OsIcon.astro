@@ -1,0 +1,29 @@
+---
+// A system's own logo for the download list: Apple and Tux from simple-icons, and the
+// Windows mark drawn here (simple-icons dropped it). Brand logos are solid and fill their
+// 24-unit box, where Lucide's outline icons leave a margin, so each viewBox adds one to
+// keep them the same size as the icons around them.
+import { siApple, siLinux } from "simple-icons";
+
+export type Os = "mac" | "windows" | "linux";
+
+interface Props {
+  os: Os;
+  class?: string;
+}
+const { os, class: className = "icon" } = Astro.props;
+
+// Each logo's path and the box it's drawn in. The margins are set by eye against Lucide's
+// laptop and monitor: the solid Windows squares sit smaller, and the line-drawn Tux larger.
+const logos: Record<Os, { path: string; box: string }> = {
+  mac: { path: siApple.path, box: "-2.5 -2.5 29 29" },
+  // Four squares with a thin gap, flat.
+  windows: { path: "M3 3h8.25v8.25H3zM12.75 3H21v8.25h-8.25zM3 12.75h8.25V21H3zM12.75 12.75H21V21h-8.25z", box: "0 0 24 24" },
+  linux: { path: siLinux.path, box: "-1.5 -1.5 27 27" },
+};
+const { path, box } = logos[os];
+---
+
+<svg class={className} viewBox={box} fill="currentColor" stroke="none" aria-hidden="true">
+  <path d={path} />
+</svg>

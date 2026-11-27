@@ -14,11 +14,11 @@ const LATEST = `${REPO}/releases/latest/download`;
 
 /** Built by .github/workflows/release.yml; file names carry no version. */
 export const SYSTEMS = [
-  { id: "mac-arm", name: "macOS, Apple Silicon", button: "Download for Mac", kind: "laptop", url: `${LATEST}/broadside-aarch64-apple-darwin.tar.gz` },
-  { id: "mac-intel", name: "macOS, Intel", button: "Download for Mac", kind: "laptop", url: `${LATEST}/broadside-x86_64-apple-darwin.tar.gz` },
-  { id: "windows", name: "Windows", button: "Download for Windows", kind: "monitor", url: `${LATEST}/broadside-x86_64-pc-windows-msvc.zip` },
-  { id: "linux", name: "Linux, x86-64", button: "Download for Linux", kind: "monitor", url: `${LATEST}/broadside-x86_64-unknown-linux-gnu.tar.gz` },
-  { id: "linux-arm", name: "Linux, ARM", button: "Download for Linux", kind: "monitor", url: `${LATEST}/broadside-aarch64-unknown-linux-gnu.tar.gz` },
+  { id: "mac-arm", name: "macOS, Apple Silicon", button: "Download for Mac", os: "mac", url: `${LATEST}/broadside-aarch64-apple-darwin.tar.gz` },
+  { id: "mac-intel", name: "macOS, Intel", button: "Download for Mac", os: "mac", url: `${LATEST}/broadside-x86_64-apple-darwin.tar.gz` },
+  { id: "windows", name: "Windows", button: "Download for Windows", os: "windows", url: `${LATEST}/broadside-x86_64-pc-windows-msvc.zip` },
+  { id: "linux", name: "Linux, x86-64", button: "Download for Linux", os: "linux", url: `${LATEST}/broadside-x86_64-unknown-linux-gnu.tar.gz` },
+  { id: "linux-arm", name: "Linux, ARM", button: "Download for Linux", os: "linux", url: `${LATEST}/broadside-aarch64-unknown-linux-gnu.tar.gz` },
 ] as const;
 
 /** The play page as one self-contained file (scripts/offline.mjs), served by the site itself:

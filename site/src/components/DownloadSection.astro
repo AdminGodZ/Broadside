@@ -2,13 +2,11 @@
 import ChevronRight from "@lucide/astro/icons/chevron-right";
 import Download from "@lucide/astro/icons/download";
 import Info from "@lucide/astro/icons/info";
-import Laptop from "@lucide/astro/icons/laptop";
-import Monitor from "@lucide/astro/icons/monitor";
 import Terminal from "@lucide/astro/icons/terminal";
 import { RELEASES, SYSTEMS, VERSION } from "../lib/site";
 import Button from "./Button.astro";
+import OsIcon from "./OsIcon.astro";
 
-const kinds = { laptop: Laptop, monitor: Monitor };
 const note = "flex gap-[9px] text-ink-soft";
 ---
 
@@ -39,9 +37,7 @@ const note = "flex gap-[9px] text-ink-soft";
         class="absolute top-[calc(100%+8px)] -left-1.5 z-10 grid min-w-max gap-0.5 rounded-md border border-rule bg-paper p-1.5 shadow-[0_10px_30px_-12px_rgb(0_0_0/.35)]"
       >
         {
-          SYSTEMS.map((s) => {
-            const Kind = kinds[s.kind];
-            return (
+          SYSTEMS.map((s) => (
               <li data-os={s.id}>
                 <a
                   href={s.url}
@@ -49,12 +45,11 @@ const note = "flex gap-[9px] text-ink-soft";
                   data-button={s.button}
                   data-name={s.name}
                 >
-                  <Kind class="icon text-ink-soft" />
+                  <OsIcon os={s.os} class="icon text-ink-soft" />
                   {s.name}
                 </a>
               </li>
-            );
-          })
+          ))
         }
       </ul>
     </details>
