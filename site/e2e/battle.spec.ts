@@ -31,18 +31,19 @@ test("a whole game: started before the engine is in, played out, then another", 
 });
 
 test("Start battle pressed before the game's script is in still starts it", async ({ page }) => {
-  // The script held back a second (a slow connection): the page has drawn the fleet and enabled
-  // Start on its own (Game.astro), so a press then must not be lost.
-  let released = false;
+  // The script held back until the test lets it go (a slow connection): the page has drawn the
+  // fleet and enabled Start on its own (Game.astro), so a press then must not be lost.
+  let release!: () => void;
+  const held = new Promise<void>((done) => (release = done));
   await page.route(/\/_astro\/Game\.astro.*\.js$/, async (route) => {
-    await new Promise((done) => setTimeout(done, 1000));
-    released = true;
+    await held;
     await route.continue();
   });
   await page.goto("/play", { waitUntil: "commit" });
   await expect(page.locator("#start")).toBeEnabled();
   await page.locator("#start").click();
-  expect(released, "pressed before the script came").toBe(false);
+  await expect(page.locator("#start")).toHaveAttribute("data-pressed", "1"); // noted by the page's own script
+  release();
   await expect(page.locator("#target-col")).toBeVisible();
   await expect(page.locator("#log li").last()).toHaveText(/^Coin toss: /);
 });
