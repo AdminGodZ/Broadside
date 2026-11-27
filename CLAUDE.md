@@ -19,3 +19,4 @@ See README.md for the roadmap and reference numbers.
 - `cargo run --release -p broadside -- compare A B` (paired comparison of two shooters)
 - `cargo clippy --all-targets`
 - `cd site && npm run build` (website and browser game; the engine as WebAssembly, and the game folded into `site/dist/broadside.html` for offline play)
+- `cd site && npm run test:e2e` (after a build: the site and the game played end to end in Chromium, WebKit, Firefox and a phone; `npx playwright install` first)
