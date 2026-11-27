@@ -1,32 +1,14 @@
-// The browser game's logic and drawing. The engine is the Rust crate
-// broadside-wasm, built to broadside.wasm by scripts/prepare.sh: a plain C ABI,
-// numbers in and out (see crates/wasm/src/lib.rs). Cells are row * 10 + col;
+// The browser game's logic and drawing. The engine (engine.ts) runs in a worker,
+// so every call to it is a batch answered later. Cells are row * 10 + col;
 // placement slots are top-left cell * 2 + vertical; outcomes 0 miss, 1 hit,
 // 2 + ship for a sinking.
-import wasmUrl from "./broadside.wasm?url";
-
-interface Engine {
-  bs_new_game(seed: number): void;
-  bs_random_fleet(): void;
-  bs_offer_slot(ship: number): number;
-  bs_set_fleet(a: number, b: number, c: number, d: number, e: number): number;
-  bs_player_fire(cell: number): number;
-  bs_player_won(): number;
-  bs_engine_fire(): number;
-  bs_engine_won(): number;
-  bs_engine_slot(ship: number): number;
-  bs_finish(): void;
-  bs_update_heat(): void;
-  bs_heat(cell: number): number;
-}
+import { type Batch, type Call, type Engine, loadEngine } from "./engine";
+import { SHIPS, TEXT, cellName as name } from "./shared";
 
 type Phase = "loading" | "placing" | "battle" | "over";
 interface Side { shots: Map<number, number>; sunk: number[]; count: number; last: number | null; fresh: number | null }
 interface Chart { cells: HTMLButtonElement[]; layer: HTMLDivElement }
 
-const SHIPS: [string, number][] = [["Carrier", 5], ["Battleship", 4], ["Cruiser", 3], ["Submarine", 3], ["Destroyer", 2]];
-const ROWS = "ABCDEFGHIJ";
-const name = (c: number) => ROWS[Math.floor(c / 10)] + (c % 10 + 1);
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const KEYS = matchMedia("(hover: hover)").matches; // keyboard hints only where there is likely a keyboard
 const OUT = (o: number) => (o === 0 ? "miss" : o === 1 ? "hit" : "sunk");
@@ -38,6 +20,26 @@ function cellsOf(len: number, slot: number): number[] | null {
   return Array.from({ length: len }, (_, k) => start + (vertical ? 10 * k : k));
 }
 const placed = (len: number, slot: number) => cellsOf(len, slot) as number[]; // slots in the fleet are valid
+/** A random legal fleet, drawn as the engine's Layout::random does (uniform over all fleets), so it needs no engine. */
+function randomSlots(): number[] {
+  for (;;) {
+    const taken = new Set<number>();
+    let clear = true;
+    const slots = SHIPS.map(([, len]) => {
+      let slot: number, cells: number[] | null;
+      do {
+        slot = Math.floor(Math.random() * 200);
+        cells = cellsOf(len, slot);
+      } while (!cells);
+      for (const c of cells) {
+        if (taken.has(c)) clear = false;
+        taken.add(c);
+      }
+      return slot;
+    });
+    if (clear) return slots;
+  }
+}
 const newSide = (): Side => ({ shots: new Map(), sunk: [], count: 0, last: null, fresh: null });
 
 let E: Engine;
@@ -60,30 +62,17 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLEl
   return Object.assign(document.createElement(tag), props);
 }
 
-function buildChart(root: HTMLElement, onCell: (i: number | null, kind: "click" | "enter" | "leave") => void): Chart {
-  root.replaceChildren(el("span", { className: "axis" }));
-  for (let c = 0; c < 10; c++) root.append(el("span", { className: "axis", textContent: String(c + 1) }));
-  for (let r = 0; r < 10; r++) {
-    const a = el("span", { className: "axis", textContent: ROWS[r] });
-    a.style.gridColumn = "1";
-    a.style.gridRow = String(r + 2);
-    root.append(a);
-  }
-  const sea = el("div", { className: "sea" });
-  const layer = el("div", { className: "layer" });
-  sea.append(layer);
-  const cells = Array.from({ length: 100 }, (_, i) => {
-    const b = el("button", { className: "cell", type: "button" });
-    b.setAttribute("aria-label", name(i));
+/** A chart from the page's markup (Chart.astro), with its cells wired up. */
+function chart(root: HTMLElement, onCell: (i: number | null, kind: "click" | "enter" | "leave") => void): Chart {
+  const sea = root.querySelector<HTMLDivElement>(".sea")!;
+  const cells = [...sea.querySelectorAll<HTMLButtonElement>(".cell")];
+  cells.forEach((b, i) => {
     b.addEventListener("click", () => onCell(i, "click"));
     b.addEventListener("pointerenter", () => onCell(i, "enter"));
     b.addEventListener("focus", () => onCell(i, "enter"));
-    sea.append(b);
-    return b;
   });
   sea.addEventListener("pointerleave", () => onCell(null, "leave"));
-  root.append(sea);
-  return { cells, layer };
+  return { cells, layer: sea.querySelector<HTMLDivElement>(".layer")! };
 }
 
 let target: Chart, home: Chart;
@@ -129,11 +118,10 @@ function placeAt(cell: number) {
   }
 }
 function randomFleet() {
-  E.bs_random_fleet();
-  S.fleet = SHIPS.map((_, s) => E.bs_offer_slot(s));
+  S.fleet = randomSlots();
   S.selected = null;
   S.fresh = "all";
-  note("A random fleet. Move any ship, or start the battle.");
+  note(TEXT.random);
   render();
 }
 function clearFleet() {
@@ -148,9 +136,47 @@ function setVertical(v: boolean) {
 }
 
 // ---------- battle ----------
-function startBattle() {
-  const [a, b, c, d, e] = S.fleet as number[];
-  if (!E.bs_set_fleet(a, b, c, d, e)) return flash("Every ship needs a place on the chart.");
+/** Runs calls on the engine. Should it fail, the game stops there with the reason shown. */
+const call = (batch: Batch) =>
+  E.run(batch).catch((err: Error) => {
+    stopped(`The engine stopped: ${err.message}.`);
+    return new Promise<never>(() => {});
+  });
+/** Counts games, so an answer that comes back after its game was left (resigned, say) is dropped. */
+let game = 0;
+const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+// The engine's belief about your fleet, shown when "Show where the engine expects your ships" is
+// ticked. It changes only when the engine fires or learns, so it's fetched then, with that call.
+const HEAT: Batch = [["bs_update_heat"], ...Array.from({ length: 100 }, (_, i): Call => ["bs_heat", i])];
+let heat: number[] | null = null;
+const wantHeat = () => $<HTMLInputElement>("heat").checked && (S.phase === "battle" || S.phase === "over");
+/** `batch`, and the heat map after it when it's shown; `took` applies the results. */
+function andHeat(batch: Batch) {
+  const withHeat = wantHeat();
+  return {
+    batch: withHeat ? [...batch, ...HEAT] : batch,
+    took: (results: number[]) => (heat = withHeat ? results.slice(batch.length + 1) : null),
+  };
+}
+function refreshHeat() {
+  if (!wantHeat() || !E) return;
+  const g = game, { batch, took } = andHeat([]);
+  call(batch).then((results) => {
+    if (g !== game) return;
+    took(results);
+    render();
+  });
+}
+
+let starting = false;
+async function startBattle() {
+  if (S.phase !== "placing" || starting) return;
+  starting = true;
+  const [ok] = await call([["bs_set_fleet", ...(S.fleet as number[])]]);
+  starting = false;
+  if (S.phase !== "placing") return;
+  if (!ok) return flash("Every ship needs a place on the chart.");
   try {
     localStorage.setItem("broadside.fleet", JSON.stringify(S.fleet));
   } catch {}
@@ -160,47 +186,51 @@ function startBattle() {
   S.yourTurn = Math.random() < 0.5;
   log(S.yourTurn ? "Coin toss: you fire first" : "Coin toss: the engine fires first", "");
   render();
-  if (!S.yourTurn) engineMove();
+  if (S.yourTurn) refreshHeat();
+  else engineMove();
 }
-function playerFire(cell: number) {
+async function playerFire(cell: number) {
   if (S.phase !== "battle" || !S.yourTurn || S.thinking || S.you.shots.has(cell)) return;
-  const o = E.bs_player_fire(cell);
-  if (o < 0) return;
+  S.yourTurn = false; // one shot at a time
+  const g = game;
+  const [o, won] = await call([["bs_player_fire", cell], ["bs_player_won"]]);
+  if (g !== game || S.phase !== "battle") return;
+  if (o < 0) {
+    S.yourTurn = true;
+    return;
+  }
   S.you.shots.set(cell, o);
   S.you.count++;
   S.you.fresh = cell;
   if (o >= 2) S.you.sunk.push(o - 2);
   log(`${name(cell)} ${o >= 2 ? SHIPS[o - 2][0] + " sunk" : OUT(o)}`, "you " + (o === 1 ? "h" : o >= 2 ? "s" : ""));
-  if (E.bs_player_won()) return finish(true);
-  S.yourTurn = false;
+  if (won) return finish(true);
   render();
   engineMove();
 }
-function engineMove() {
+async function engineMove() {
   S.thinking = true;
   render();
-  // Let the page paint "aiming" before the engine takes the main thread.
-  setTimeout(() =>
-    requestAnimationFrame(() =>
-      setTimeout(() => {
-        const r = E.bs_engine_fire(), cell = r >> 4, o = r & 15;
-        S.it.shots.set(cell, o);
-        S.it.count++;
-        S.it.last = cell;
-        if (o >= 2) S.it.sunk.push(o - 2);
-        log(`${name(cell)} ${o >= 2 ? SHIPS[o - 2][0] + " sunk" : OUT(o)}`, "it " + (o === 1 ? "h" : o >= 2 ? "s" : ""));
-        S.thinking = false;
-        if (E.bs_engine_won()) return finish(false);
-        S.yourTurn = true;
-        render();
-      }, 0),
-    ), 220);
+  // The engine thinks while the page shows it aiming: its shot lands after 0.22 s, or once
+  // it has decided, whichever is later.
+  const g = game, { batch, took } = andHeat([["bs_engine_fire"], ["bs_engine_won"]]);
+  const [results] = await Promise.all([call(batch), wait(220)]);
+  if (g !== game || S.phase !== "battle") return;
+  const [r, won] = results, cell = r >> 4, o = r & 15;
+  took(results);
+  S.it.shots.set(cell, o);
+  S.it.count++;
+  S.it.last = cell;
+  if (o >= 2) S.it.sunk.push(o - 2);
+  log(`${name(cell)} ${o >= 2 ? SHIPS[o - 2][0] + " sunk" : OUT(o)}`, "it " + (o === 1 ? "h" : o >= 2 ? "s" : ""));
+  S.thinking = false;
+  if (won) return finish(false);
+  S.yourTurn = true;
+  render();
 }
-function finish(youWon: boolean) {
+async function finish(youWon: boolean) {
   S.phase = "over";
   S.thinking = false;
-  S.reveal = SHIPS.map((_, s) => E.bs_engine_slot(s));
-  E.bs_finish();
   if (youWon) {
     S.record.w++;
     S.record.winShots.push(S.you.count);
@@ -214,19 +244,33 @@ function finish(youWon: boolean) {
     : `<h3>The engine wins in ${S.it.count} shots</h3><p>You had ${left} ship cell${left === 1 ? "" : "s"} left to find. Its fleet is outlined in enemy waters.</p>`;
   b.hidden = false;
   render();
+  // Its fleet, for the reveal; then both sides of the engine learn from the game.
+  const g = game, { batch, took } = andHeat([...SHIPS.map((_, s): Call => ["bs_engine_slot", s]), ["bs_finish"]]);
+  const results = await call(batch);
+  if (g !== game) return;
+  S.reveal = results.slice(0, SHIPS.length);
+  took(results);
+  render();
 }
-function newGame() {
-  E.bs_new_game(Math.random() * 2 ** 52);
-  Object.assign(S, { phase: "placing", selected: null, hover: null, reveal: null, thinking: false, fresh: null, you: newSide(), it: newSide() });
-  $("log").replaceChildren();
-  $("banner").hidden = true;
+/** The fleet the player last went into battle with, if any. Game.astro checks it the same way before the first paint. */
+function savedFleet(): number[] | null {
   let saved: unknown = null;
   try {
     saved = JSON.parse(localStorage.getItem("broadside.fleet") ?? "null");
   } catch {}
-  if (Array.isArray(saved) && saved.length === 5 && saved.every((x) => Number.isInteger(x))) {
+  return Array.isArray(saved) && saved.length === 5 && saved.every((x) => Number.isInteger(x)) ? saved : null;
+}
+function newGame() {
+  game++;
+  heat = null;
+  call([["bs_new_game", Math.random() * 2 ** 52]]);
+  Object.assign(S, { phase: "placing", selected: null, hover: null, reveal: null, thinking: false, fresh: null, you: newSide(), it: newSide() });
+  $("log").replaceChildren();
+  $("banner").hidden = true;
+  const saved = savedFleet();
+  if (saved) {
     S.fleet = saved;
-    note("Your last fleet is in position. Move any ship, or start the battle.");
+    note(TEXT.saved);
   } else randomFleet();
   render();
 }
@@ -235,9 +279,16 @@ function newGame() {
 let flashTimer: ReturnType<typeof setTimeout> | undefined;
 let notice: string | null = null;
 const note = (text: string | null) => (notice = text);
-const sub = (text: string) => el("span", { className: "msg-sub", textContent: text });
+/** The status line: a heading and a line under it. Left as it is when they haven't changed,
+ * so the line Game.astro wrote before the first paint stays (redrawn, it would count as a late paint). */
+function say(head: string, line: string) {
+  const msg = $("msg");
+  if (!msg) return; // the engine stopped, and says so in its place
+  if (msg.childNodes.length === 2 && msg.textContent === head + line) return;
+  msg.replaceChildren(head, el("span", { className: "msg-sub", textContent: line }));
+}
 function flash(text: string) {
-  $("msg").replaceChildren(text, sub(KEYS ? "Try another cell, or turn it with R." : "Try another cell, or turn it."));
+  say(text, KEYS ? "Try another cell, or turn it with R." : "Try another cell, or turn it.");
   clearTimeout(flashTimer);
   flashTimer = setTimeout(render, 1800);
 }
@@ -284,7 +335,7 @@ function renderDock() {
     s !== null
       ? `Click a cell for the ${SHIPS[s][0]}'s ${S.vertical ? "top" : "left"} end.` +
         (S.fleet[s] !== null ? (KEYS ? " Esc puts it back." : " Tap it in this list to put it back.") : "")
-      : "Click a ship on the chart, or in this list, to move it.";
+      : TEXT.pickHint;
 }
 
 function renderTally(list: HTMLElement, sunk: number[]) {
@@ -345,8 +396,7 @@ function render() {
       hull(home.layer, S.vertical ? 10 - r : 10 - c, slot, "ghost bad");
     }
   }
-  const showHeat = heatOn && !placing;
-  if (showHeat) E.bs_update_heat();
+  const showHeat = heatOn && !placing && heat !== null;
   home.cells.forEach((b, i) => {
     const o = S.it.shots.get(i);
     b.className = "cell" + (o === undefined ? "" : o === 0 ? " miss" : " hit") + (S.it.last === i ? " fresh" : "");
@@ -355,7 +405,7 @@ function render() {
     b.replaceChildren();
     let chance = "";
     if (showHeat && o === undefined) {
-      const h = E.bs_heat(i);
+      const h = heat![i];
       chance = h <= 0 ? "0%" : h >= 1 ? "100%" : h < 0.005 ? "under 1%" : h > 0.995 ? "over 99%" : Math.round(h * 100) + "%";
       const d = el("span", { className: "heat" });
       d.style.opacity = (h * 0.85).toFixed(3);
@@ -380,7 +430,6 @@ function render() {
     : `engine: ${S.it.count} shot${S.it.count === 1 ? "" : "s"}`;
 
   // Status line and actions
-  const msg = $("msg");
   $("resign").hidden = S.phase !== "battle";
   $("new-game").hidden = S.phase !== "over";
   if (placing) {
@@ -388,13 +437,14 @@ function render() {
     if (S.selected !== null) {
       const [n, len] = SHIPS[S.selected];
       const turn = KEYS ? "Press R to turn it." : "Turn it with Across or Down.";
-      msg.replaceChildren(S.fleet[S.selected] === null ? `Place your ${n}` : `Move your ${n}`, sub(notice ?? `${len} cells, ${S.vertical ? "down" : "across"}. ${turn}`));
-    } else msg.replaceChildren(ready ? "Your fleet is ready" : "Place your fleet", sub(notice ?? "Move any ship, or start the battle."));
+      say(S.fleet[S.selected] === null ? `Place your ${n}` : `Move your ${n}`, notice ?? `${len} cells, ${S.vertical ? "down" : "across"}. ${turn}`);
+    } else say(ready ? TEXT.ready : "Place your fleet", notice ?? TEXT.moveOn);
     notice = null;
   } else if (S.phase === "battle") {
-    msg.replaceChildren(...(S.thinking ? ["The engine is aiming…", sub("It weighs every fleet that could be hiding.")] : ["Your shot", sub("Pick a cell in enemy waters.")]));
+    if (S.thinking) say("The engine is aiming…", "It weighs every fleet that could be hiding.");
+    else say("Your shot", "Pick a cell in enemy waters.");
   } else if (S.phase === "over") {
-    msg.replaceChildren("Game over", sub("Your fleet stays where it was for the next game."));
+    say("Game over", "Your fleet stays where it was for the next game.");
   }
   $("rec-w").textContent = String(S.record.w);
   $("rec-l").textContent = String(S.record.l);
@@ -403,19 +453,14 @@ function render() {
 }
 
 // ---------- boot ----------
-async function loadEngine(): Promise<Engine> {
-  // The offline single-file version (scripts/offline.mjs) carries the engine inline.
-  const inline = (window as { BROADSIDE_WASM?: string }).BROADSIDE_WASM;
-  const bytes = inline ? Uint8Array.from(atob(inline), (ch) => ch.charCodeAt(0)) : await (await fetch(wasmUrl)).arrayBuffer();
-  const { instance } = await WebAssembly.instantiate(bytes, {});
-  return instance.exports as unknown as Engine;
-}
-
-export async function start() {
-  target = buildChart($("target"), (i, kind) => {
+export function start() {
+  const engine = loadEngine();
+  // Start battle needs the engine; pressed before it is there, it waits for it.
+  const withEngine = (f: () => void) => () => (E ? f() : engine.then(f, () => {}));
+  target = chart($("target"), (i, kind) => {
     if (kind === "click" && i !== null) playerFire(i);
   });
-  home = buildChart($("home"), (i, kind) => {
+  home = chart($("home"), (i, kind) => {
     if (S.phase !== "placing") return;
     if (kind === "click" && i !== null) placeAt(i);
     else if (S.hover !== i) {
@@ -437,15 +482,40 @@ export async function start() {
   $("dir-v").addEventListener("click", () => setVertical(true));
   $("random").addEventListener("click", randomFleet);
   $("clear").addEventListener("click", clearFleet);
-  $("start").addEventListener("click", startBattle);
+  $("start").addEventListener("click", withEngine(startBattle));
   $("resign").addEventListener("click", () => finish(false));
   $("new-game").addEventListener("click", newGame);
-  $("heat").addEventListener("change", render);
-  try {
-    E = await loadEngine();
-    newGame();
-  } catch (err) {
-    const box = el("div", { className: "error", textContent: `The engine could not start: ${(err as Error).message}.` });
-    $("msg").replaceWith(box);
-  }
+  $("heat").addEventListener("change", () => {
+    refreshHeat();
+    render();
+  });
+
+  // Placing needs no engine: the fleet the page drew before its first paint (Game.astro), the
+  // saved one or a random one, is on the chart already; it's taken over as it is.
+  S.phase = "placing";
+  const drawn = JSON.parse($("home").dataset.fleet ?? "null") as { fleet: number[]; saved: boolean } | null;
+  const saved = drawn ? null : savedFleet();
+  if (drawn || saved) {
+    S.fleet = drawn?.fleet ?? saved!;
+    note(drawn && !drawn.saved ? TEXT.random : TEXT.saved);
+    render();
+  } else randomFleet();
+  engine.then(
+    (e) => {
+      E = e;
+      if (S.phase === "placing") call([["bs_new_game", Math.random() * 2 ** 52]]); // keep the fleet, and any move already made
+      else newGame();
+    },
+    (err: Error) => stopped(`The engine could not start: ${err.message}.`),
+  );
+  // Start battle, pressed before this script was in (Game.astro notes it). After the engine's
+  // handler above, so the battle starts once the engine is in and has begun its game.
+  if ($("start").dataset.pressed) withEngine(startBattle)();
+}
+/** The engine is out: the game stops, with the reason in place of the status line. */
+function stopped(why: string) {
+  game++;
+  S.phase = "loading";
+  $("dock").hidden = true;
+  $("msg")?.replaceWith(el("div", { className: "error", textContent: why }));
 }

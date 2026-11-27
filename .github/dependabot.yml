@@ -1,0 +1,30 @@
+# Dependabot keeps dependencies current: one pull request a month per ecosystem,
+# with all its updates together. Fixes for known vulnerabilities don't wait for
+# that: they come as their own pull requests as soon as they're out (Dependabot
+# security updates, switched on in the repository's settings).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: monthly
+    groups:
+      site:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # No crates yet; this covers them from the first one.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      crates:
+        patterns: ["*"]

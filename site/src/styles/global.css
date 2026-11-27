@@ -16,6 +16,8 @@
   --mark: #e0a100;       /* the latest shot and keyboard focus */
   --good: #1f7a4d;       /* a win, a ship in place */
   --grain-opacity: .5;
+  /* Saira Stencil One comes inline with the page (src/fonts/stencil.css, from scripts/fonts.mjs). */
+  --stencil: "Saira Stencil One", "Arial Narrow", Impact, sans-serif;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -38,7 +40,7 @@
   --color-hit: var(--hit);
   --color-mark: var(--mark);
   --color-good: var(--good);
-  /* --serif (Newsreader) and --stencil (Saira Stencil One) come from the fonts in astro.config.mjs. */
+  /* --serif (Newsreader) comes from the fonts in astro.config.mjs; --stencil is set above. */
   --font-serif: var(--serif);
   --font-stencil: var(--stencil);
 }
@@ -56,6 +58,8 @@
 @custom-variant os-mobile (html[data-os="mobile"] &);
 
 @layer base {
+  /* Until Newsreader is in (at most 0.6 s): see Base.astro. */
+  .fonts-wait body { visibility: hidden; }
   html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
   body {
