@@ -255,6 +255,171 @@ impl Placer for MixedPlacer {
 /// Equilibrium play that turns exploitative against opponents who keep
 /// looking in the same places.
 ///
+/// A game lasts until the opponent has found the last ship, so what a
+/// layout is worth against a given way of searching is decided by its
+/// best-hidden ship, not by its average cell. The placer records when the
+/// opponent comes to each cell while hunting (shots aimed at a ship already
+/// hit say nothing about where it looks unprompted), draws a few hundred
+/// layouts and places one of those whose ships would be found latest.
+///
+/// A bandit chooses between that and the equilibrium mix by how many shots
+/// the opponent spent per hit. Against an opponent that adapts, hiding stops
+/// paying and the bandit drifts back to the equilibrium.
+///
+/// It learns only from shots actually fired: a game ends when either fleet
+/// is sunk, so the opponent's trace usually stops short of sinking ours.
+pub struct AdaptivePlacer {
+    equilibrium: MixedPlacer,
+    /// Per cell: the summed time (shots fired before it, as a share of the
+    /// board) at which the opponent came to it while hunting, older games
+    /// counting for less (`fade`); and the games' summed weight.
+    late: [f64; CELLS],
+    games: f64,
+    /// What a game counts for after each further one: below 1 the picture
+    /// follows an opponent that changes where it looks.
+    pub fade: f64,
+    /// The layout placed is one of the best this many of the draws, so that
+    /// the same hiding place does not come up game after game.
+    pub top: u64,
+    /// Plays and summed reward of the equilibrium mix and of hiding.
+    arm_plays: [u32; 2],
+    arm_shots: [f64; 2],
+    last_arm: usize,
+}
+
+/// Layouts drawn per game when hiding.
+const HIDE_DRAWS: usize = 600;
+/// What the average ship counts for next to the best-hidden one.
+const HIDE_MEAN: f64 = 0.25;
+/// Strength of the tilt toward late cells that a third of the draws come
+/// from, in theta units per standard deviation of lateness.
+const HIDE_TILT: f64 = 1.0;
+
+impl Default for AdaptivePlacer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AdaptivePlacer {
+    pub fn new() -> Self {
+        Self {
+            equilibrium: MixedPlacer::equilibrium(),
+            late: [0.0; CELLS],
+            games: 0.0,
+            fade: 1.0,
+            top: 5,
+            arm_plays: [0; 2],
+            arm_shots: [0.0; 2],
+            last_arm: 0,
+        }
+    }
+
+    fn pick_arm(&self) -> usize {
+        // Nothing seen yet: nowhere to hide.
+        if self.games == 0.0 {
+            return 0;
+        }
+        // UCB1 on the shots the opponent needs (as a fraction of the board).
+        if let Some(a) = (0..2).find(|&a| self.arm_plays[a] == 0) {
+            return a;
+        }
+        let total: f64 = self.arm_plays.iter().map(|&n| n as f64).sum();
+        (0..2)
+            .max_by(|&a, &b| {
+                let ucb = |i: usize| {
+                    let n = self.arm_plays[i] as f64;
+                    self.arm_shots[i] / n + 0.15 * (2.0 * total.ln() / n).sqrt()
+                };
+                ucb(a).total_cmp(&ucb(b))
+            })
+            .unwrap()
+    }
+
+    /// When the opponent is expected to find each ship of `layout`, as a
+    /// share of the board shot by then: the earliest of its cells.
+    fn found(late: &[f64; CELLS], layout: &Layout) -> [f64; SHIPS] {
+        crate::fleet::FLEET.map(|s| {
+            Bits(layout.ship(s).0)
+                .map(|c| late[c])
+                .fold(f64::INFINITY, f64::min)
+        })
+    }
+
+    /// A layout whose ships lie where the opponent has looked late.
+    fn hide(&mut self, rng: &mut Rng) -> Layout {
+        let late = self.late.map(|l| l / self.games);
+        let mu = late.iter().sum::<f64>() / CELLS as f64;
+        let sd = (late.iter().map(|l| (l - mu).powi(2)).sum::<f64>() / CELLS as f64)
+            .sqrt()
+            .max(1e-6);
+        let toward = Tilt::from_theta(late.map(|l| HIDE_TILT * (l - mu) / sd));
+        // Draws from three sides: toward the late cells, from the
+        // equilibrium mix, and from anywhere.
+        let mut scored: Vec<(f64, Layout)> = (0..HIDE_DRAWS)
+            .map(|i| {
+                let layout = match i % 3 {
+                    0 => toward.sample(rng),
+                    1 => self.equilibrium.place(rng),
+                    _ => Layout::random(rng),
+                };
+                let found = Self::found(&late, &layout);
+                let last = found.iter().cloned().fold(0.0, f64::max);
+                let mean = found.iter().sum::<f64>() / SHIPS as f64;
+                (last + HIDE_MEAN * mean, layout)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        scored[rng.below(self.top.clamp(1, scored.len() as u64)) as usize].1
+    }
+}
+
+impl Placer for AdaptivePlacer {
+    fn name(&self) -> String {
+        "adaptive".into()
+    }
+
+    fn place(&mut self, rng: &mut Rng) -> Layout {
+        self.last_arm = self.pick_arm();
+        match self.last_arm {
+            0 => self.equilibrium.place(rng),
+            _ => self.hide(rng),
+        }
+    }
+
+    fn learn(&mut self, layout: &Layout, opponent_shots: &[usize]) {
+        let ships = crate::fleet::FLEET.map(|s| layout.ship(s).0);
+        let mut shot = 0u128;
+        let mut time = [None; CELLS];
+        for (i, &c) in opponent_shots.iter().enumerate() {
+            let t = i as f64 / CELLS as f64;
+            // With a ship hit and not yet sunk, the shot is aimed at it.
+            // Like a cell never shot, it only says that hunting had not
+            // come to the cell by then: halfway to the end is the guess.
+            let aimed = ships.iter().any(|&m| m & shot != 0 && m & !shot != 0);
+            time[c] = Some(if aimed { (t + 1.0) / 2.0 } else { t });
+            shot |= 1 << c;
+        }
+        let end = opponent_shots.len() as f64 / CELLS as f64;
+        for (l, t) in self.late.iter_mut().zip(time) {
+            *l = self.fade * *l + t.unwrap_or((end + 1.0) / 2.0);
+        }
+        self.games = self.fade * self.games + 1.0;
+        // Shots per hit, scaled to the whole fleet: the shots the opponent
+        // needed if it sank us, an estimate of them if the game ended first.
+        let n = opponent_shots.len().max(1) as f64;
+        let fleet = layout.occupied();
+        let hits = opponent_shots.iter().filter(|&&c| fleet.has(c)).count();
+        let needed = n * FLEET_CELLS as f64 / hits.max(1) as f64;
+        self.arm_plays[self.last_arm] += 1;
+        self.arm_shots[self.last_arm] += (needed / CELLS as f64).min(1.0);
+    }
+}
+
+/// The adaptive placer before `AdaptivePlacer` learned to hide ship by
+/// ship, kept to measure against: equilibrium play that tilts every cell
+/// toward where the opponent looks late.
+///
 /// It records how late the opponent shoots each cell (never shooting a cell
 /// counts as latest). The options are the equilibrium mix and two tilts toward
 /// the cells the opponent reaches last; a UCB bandit picks among them by how
@@ -263,7 +428,7 @@ impl Placer for MixedPlacer {
 ///
 /// It learns only from shots actually fired: a game ends when either fleet
 /// is sunk, so the opponent's trace usually stops short of sinking ours.
-pub struct AdaptivePlacer {
+pub struct LatenessPlacer {
     equilibrium: MixedPlacer,
     lateness: [f64; CELLS],
     games: u32,
@@ -278,13 +443,13 @@ const EXPLOIT_STRENGTH: [f64; 2] = [0.5, 1.0];
 /// Games of pure equilibrium before exploitation is considered.
 const WARMUP_GAMES: u32 = 4;
 
-impl Default for AdaptivePlacer {
+impl Default for LatenessPlacer {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl AdaptivePlacer {
+impl LatenessPlacer {
     pub fn new() -> Self {
         Self {
             equilibrium: MixedPlacer::equilibrium(),
@@ -318,9 +483,9 @@ impl AdaptivePlacer {
     }
 }
 
-impl Placer for AdaptivePlacer {
+impl Placer for LatenessPlacer {
     fn name(&self) -> String {
-        "adaptive".into()
+        "lateness".into()
     }
 
     fn place(&mut self, rng: &mut Rng) -> Layout {
@@ -455,16 +620,54 @@ mod adaptive_tests {
     use super::*;
 
     #[test]
-    fn adaptive_placer_stays_legal_while_learning() {
-        let mut p = AdaptivePlacer::new();
+    fn adaptive_placers_stay_legal_while_learning() {
         let mut rng = Rng::new(4);
+        let (mut new, mut old) = (AdaptivePlacer::new(), LatenessPlacer::new());
         for g in 0..30 {
-            let l = p.place(&mut rng);
-            assert!(Layout::new(l.slots).is_some());
+            let (a, b) = (new.place(&mut rng), old.place(&mut rng));
+            assert!(Layout::new(a.slots).is_some() && Layout::new(b.slots).is_some());
             // An opponent that always sweeps the board in reading order.
             let shots: Vec<usize> = (0..CELLS).take(60 + g).collect();
+            new.learn(&a, &shots);
+            old.learn(&b, &shots);
+        }
+        assert!(new.arm_plays.iter().sum::<u32>() == 30);
+        assert!(old.arm_plays.iter().sum::<u32>() == 30);
+    }
+
+    #[test]
+    fn hiding_puts_a_ship_where_the_opponent_looks_last() {
+        let mut p = AdaptivePlacer::new();
+        let mut rng = Rng::new(5);
+        // The opponent sweeps the top half in reading order, then the game
+        // is over: the bottom half is where it has not looked.
+        let shots: Vec<usize> = (0..CELLS / 2).collect();
+        for _ in 0..3 {
+            let l = p.place(&mut rng);
             p.learn(&l, &shots);
         }
-        assert!(p.arm_plays.iter().sum::<u32>() == 30);
+        for _ in 0..20 {
+            let l = p.hide(&mut rng);
+            let hidden = crate::fleet::FLEET
+                .iter()
+                .any(|&s| l.ship(s).iter().all(|c| c >= CELLS / 2));
+            assert!(hidden, "{l:?}");
+        }
+    }
+
+    #[test]
+    fn aimed_shots_do_not_count_as_hunting() {
+        let mut p = AdaptivePlacer::new();
+        // Carrier along the top row; the opponent hits its first cell and
+        // walks along it, then looks at the far corner.
+        let layout = Layout::new([0, 40, 80, 120, 160]).unwrap();
+        p.learn(&layout, &[0, 1, 2, 3, 4, 99]);
+        // The first shot was a hunting shot at time 0, the last at 5/100.
+        assert_eq!(p.late[0], 0.0);
+        assert!((p.late[99] - 0.05).abs() < 1e-12);
+        // The shots along the Carrier were aimed: later than their time.
+        assert!(p.late[1] > 0.5 && p.late[4] > 0.5);
+        // A cell never shot: halfway between the end of the game and never.
+        assert!((p.late[50] - 0.53).abs() < 1e-12);
     }
 }

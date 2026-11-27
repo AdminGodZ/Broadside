@@ -15,8 +15,7 @@
 //! (the likeliest cell every time) or, optionally and at a price, by trying
 //! the likeliest cells again at each later position of moderate size.
 
-use super::engine::Search;
-use super::placement::Tilt;
+use super::engine::{Prior, Search};
 use crate::bitboard::{Bits, CELLS};
 use crate::fleet::{LENGTHS, SEGMENTS, SHIPS};
 use crate::game::Knowledge;
@@ -38,12 +37,7 @@ pub struct World {
 
 /// Every world consistent with `k` (whose posterior is `p`), or `None` if
 /// there are more than `limit`.
-pub fn worlds(
-    k: &Knowledge,
-    p: &Posterior,
-    limit: usize,
-    prior: Option<&Tilt>,
-) -> Option<Vec<World>> {
+pub fn worlds(k: &Knowledge, p: &Posterior, limit: usize, prior: Prior) -> Option<Vec<World>> {
     let placements = p.enumerate_afloat(k, limit)?;
     Some(build(
         k,
@@ -53,13 +47,7 @@ pub fn worlds(
 }
 
 /// `n` worlds drawn from the posterior `p` of `k`, repeats merged.
-pub fn sampled(
-    k: &Knowledge,
-    p: &Posterior,
-    n: usize,
-    prior: Option<&Tilt>,
-    rng: &mut Rng,
-) -> Vec<World> {
+pub fn sampled(k: &Knowledge, p: &Posterior, n: usize, prior: Prior, rng: &mut Rng) -> Vec<World> {
     let mut seen: HashMap<[Option<u8>; SHIPS], u64> = HashMap::new();
     for slots in p.sample_afloat(k, n, rng) {
         *seen.entry(slots).or_insert(0) += 1;
@@ -79,17 +67,24 @@ pub fn sampled(
 pub(crate) fn build(
     k: &Knowledge,
     placements: Vec<([Option<u8>; SHIPS], f64)>,
-    prior: Option<&Tilt>,
+    prior: Prior,
 ) -> Vec<World> {
+    let unknown = k.unknown().0;
+    let mut logs: Vec<f64> = Vec::new();
     let mut out: Vec<World> = placements
         .into_iter()
         .map(|(slots, layouts)| {
             let mut ships = [0u128; SHIPS];
+            let mut log = 0.0;
             for (s, slot) in slots.iter().enumerate() {
                 if let Some(slot) = slot {
                     ships[s] = SEGMENTS[LENGTHS[s]][*slot as usize];
+                    if !prior.is_none() {
+                        log += prior.ln_weight(s, *slot as usize, unknown);
+                    }
                 }
             }
+            logs.push(log);
             World {
                 ships,
                 all: ships.iter().fold(0, |a, m| a | m),
@@ -97,14 +92,7 @@ pub(crate) fn build(
             }
         })
         .collect();
-    if let Some(t) = prior {
-        // P(layout) ∝ Π e^θ over its cells. Every consistent layout holds
-        // all the hit cells, so only a world's unshot cells set it apart.
-        let unknown = k.unknown().0;
-        let logs: Vec<f64> = out
-            .iter()
-            .map(|w| Bits(w.all & unknown).map(|c| t.theta[c]).sum())
-            .collect();
+    if !prior.is_none() {
         let top = logs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         for (w, l) in out.iter_mut().zip(logs) {
             w.weight *= (l - top).exp();
@@ -208,10 +196,18 @@ pub struct Tree<'a> {
     values: [Table; 2],
     /// Scratch for `split`: the outcome per world.
     outcomes: Vec<u8>,
+    /// Where the two-cell ship lies per world: its first cell, and whether
+    /// it runs down (255 if it is sunk).
+    small: Vec<(u8, bool)>,
+    /// Cells of the ships sunk before the search began.
+    sunk_len: u32,
 }
 
 /// Smaller positions are quicker to evaluate than to look up.
 const TABLE_MIN: usize = 4;
+/// Lines of play follow the cover rule in positions of at least this many
+/// placements; in smaller ones it gained nothing when measured.
+const COVER_MIN: usize = 8;
 /// Positions kept per table (about 50 bytes each).
 const TABLE_MAX: usize = 2_000_000;
 
@@ -227,6 +223,24 @@ impl<'a> Tree<'a> {
             tags: (0..worlds.len()).map(tag).collect(),
             values: Default::default(),
             outcomes: vec![0; worlds.len()],
+            small: worlds
+                .iter()
+                .map(|w| {
+                    let m = w.ships[SHIPS - 1];
+                    let c = m.trailing_zeros() as usize;
+                    if m == 0 {
+                        (255, false)
+                    } else {
+                        (c as u8, m >> (c + 1) & 1 == 0)
+                    }
+                })
+                .collect(),
+            sunk_len: worlds.first().map_or(0, |w| {
+                (0..SHIPS)
+                    .filter(|&s| w.ships[s] == 0)
+                    .map(|s| LENGTHS[s] as u32)
+                    .sum()
+            }),
         }
     }
 
@@ -305,7 +319,22 @@ impl<'a> Tree<'a> {
         }
         let occ = occupancy(self.worlds.iter(), hits);
         let mut cands = ranked(&occ, s.or);
-        cands.truncate(self.cfg.candidates.max(1));
+        let n = self.cfg.candidates.max(1);
+        if let Some(cover) = self.cover(&root, hits) {
+            // The likeliest two cells whatever they cover, then the best
+            // by the cover rule.
+            let mut by_cover = cands.clone();
+            let bonus = self.cfg.cover * s.weight;
+            let score = |c: usize| occ[c] + bonus * (cover >> c & 1) as f64;
+            by_cover.sort_by(|&a, &b| score(b).total_cmp(&score(a)));
+            cands.truncate(2);
+            for c in by_cover {
+                if !cands.contains(&c) {
+                    cands.push(c);
+                }
+            }
+        }
+        cands.truncate(n);
         let values = self.judge(&cands, threads, &|tree, x| tree.after(x, hits, &root));
         let mut best = (f64::INFINITY, 0);
         for (&x, v) in cands.iter().zip(values) {
@@ -462,9 +491,44 @@ impl<'a> Tree<'a> {
                 occ[c] += self.weight[i as usize];
             }
         }
+        if let Some(cover) = self.cover(x, hits) {
+            for c in Bits(cover & s.or) {
+                occ[c] += self.cfg.cover * s.weight;
+            }
+        }
         Bits(s.or).fold(s.or.trailing_zeros() as usize, |best, c| {
             if occ[c] > occ[best] { c } else { best }
         })
+    }
+
+    /// While hunting with the two-cell ship afloat: the cells of a smallest
+    /// cover of its places in the worlds `x` (see `cover`).
+    fn cover(&self, x: &[u32], hits: u128) -> Option<u128> {
+        if self.cfg.cover <= 0.0 || x.len() < COVER_MIN {
+            return None;
+        }
+        let first = &self.worlds[x[0] as usize];
+        if first.ships[SHIPS - 1] & !hits == 0 {
+            return None;
+        }
+        // Every world of a position has seen the same ships sink.
+        let sunk: u32 = (0..SHIPS)
+            .filter(|&s| first.ships[s] != 0 && first.ships[s] & !hits == 0)
+            .map(|s| LENGTHS[s] as u32)
+            .sum();
+        if hits.count_ones() != self.sunk_len + sunk {
+            return None;
+        }
+        let (mut across, mut down) = (0u128, 0u128);
+        for &i in x {
+            let (c, vertical) = self.small[i as usize];
+            if vertical {
+                down |= 1 << c;
+            } else {
+                across |= 1 << c;
+            }
+        }
+        Some(super::cover::cover_cells(across, down))
     }
 
     /// Total shots to finish after firing at `x`, less the shot itself.
@@ -700,6 +764,7 @@ mod tests {
     use super::*;
     use crate::ai::Shooter;
     use crate::ai::engine::{Broadside, rollout};
+    use crate::ai::placement::Tilt;
     use crate::fleet::Ship;
     use crate::game::{Board, Layout, Outcome};
 
@@ -809,7 +874,7 @@ mod tests {
     }
 
     fn solved(k: &Knowledge) -> (f64, usize) {
-        let w = worlds(k, &Posterior::compute(k), 64, None).unwrap();
+        let w = worlds(k, &Posterior::compute(k), 64, Prior::NONE).unwrap();
         Tree::new(&w, cfg(64, 0)).solve(k.hits.0).unwrap()
     }
 
@@ -827,7 +892,7 @@ mod tests {
         let k = eight_worlds();
         assert_eq!(Posterior::compute(&k).layouts, 8);
         assert_eq!(solved(&k), (37.0, 73));
-        let w = worlds(&k, &Posterior::compute(&k), 64, None).unwrap();
+        let w = worlds(&k, &Posterior::compute(&k), 64, Prior::NONE).unwrap();
         assert_eq!(brute(&w, k.hits.0), 37.0);
         assert_eq!(Broadside::new().choose(&k, &mut Rng::new(7)), 73);
     }
@@ -838,7 +903,7 @@ mod tests {
         assert_eq!(Posterior::compute(&k).layouts, 9);
         assert_eq!(solved(&k), (36.0, 92));
         // Rollouts alone settle for I10, at 37 shots over the nine layouts.
-        let w = worlds(&k, &Posterior::compute(&k), 64, None).unwrap();
+        let w = worlds(&k, &Posterior::compute(&k), 64, Prior::NONE).unwrap();
         assert_eq!(Tree::new(&w, cfg(0, 0)).choose(k.hits.0, 1), 89);
         assert_eq!(Tree::new(&w, cfg(0, 0)).choose(k.hits.0, 4), 89);
         assert_eq!(Broadside::new().choose(&k, &mut Rng::new(7)), 92);
@@ -856,7 +921,11 @@ mod tests {
         for h2 in [4f64.ln(), 0.0] {
             theta[71] = h2;
             let tilt = Tilt::from_theta(theta);
-            let w = worlds(&k, &Posterior::compute(&k), 64, Some(&tilt)).unwrap();
+            let prior = Prior {
+                tilt: Some(&tilt),
+                slots: None,
+            };
+            let w = worlds(&k, &Posterior::compute(&k), 64, prior).unwrap();
             let (j2, i1) = (w[0].weight, w[1].weight);
             assert!(w[0].all >> 91 & 1 == 1 && (i1 / j2 - 2.0).abs() < 1e-12);
             let mut engine = Broadside::new();
@@ -886,7 +955,7 @@ mod tests {
                 };
                 k.record(c, board.fire(c));
             }
-            if !k.won() && worlds(&k, &Posterior::compute(&k), limit, None).is_some() {
+            if !k.won() && worlds(&k, &Posterior::compute(&k), limit, Prior::NONE).is_some() {
                 out.push(k);
             }
         }
@@ -897,7 +966,7 @@ mod tests {
     fn solver_matches_plain_search() {
         let mut checked = 0;
         for k in late_states(11, 200, 6) {
-            let w = worlds(&k, &Posterior::compute(&k), 6, None).unwrap();
+            let w = worlds(&k, &Posterior::compute(&k), 6, Prior::NONE).unwrap();
             if w.len() < 3 {
                 continue;
             }
@@ -910,17 +979,22 @@ mod tests {
     #[test]
     fn tree_values_match_rollouts_on_real_posteriors() {
         for k in late_states(12, 12, 60) {
-            let w = worlds(&k, &Posterior::compute(&k), 60, None).unwrap();
+            let w = worlds(&k, &Posterior::compute(&k), 60, Prior::NONE).unwrap();
             let lists = Posterior::compute(&k).enumerate_afloat(&k, 60).unwrap();
             let n = w.len();
             let idx: Vec<u32> = (0..n as u32).collect();
             let (mut y, mut z) = (vec![0u32; n], vec![0u32; n]);
-            let mut tree = Tree::new(&w, cfg(0, 0));
+            // The rollouts play plainly greedily: no cover rule in the tree.
+            let plain = Search {
+                cover: 0.0,
+                ..cfg(0, 0)
+            };
+            let mut tree = Tree::new(&w, plain);
             for x in Bits(k.unknown().0).take(12) {
                 let mut seen = Default::default();
                 let by_rollout: f64 = lists
                     .iter()
-                    .map(|(t, n)| *n as f64 * rollout(&k, x, t, None, &mut seen) as f64)
+                    .map(|(t, n)| *n as f64 * rollout(&k, x, t, Prior::NONE, &mut seen) as f64)
                     .sum();
                 let cuts = tree.split(x, k.hits.0, &idx, &mut y);
                 let mut by_tree: f64 = w.iter().map(|w| w.weight).sum();
@@ -948,7 +1022,7 @@ mod tests {
     fn costing_each_shot_plays_for_the_fewest_shots() {
         let shots: Vec<f64> = (0..=CELLS + 1).map(|t| t as f64).collect();
         for k in late_states(14, 40, 3000) {
-            let w = worlds(&k, &Posterior::compute(&k), 3000, None).unwrap();
+            let w = worlds(&k, &Posterior::compute(&k), 3000, Prior::NONE).unwrap();
             let plain = Tree::new(&w, cfg(0, 0)).choose(k.hits.0, 1);
             assert_eq!(
                 Tree::new(&w, cfg(0, 0)).choose_for(k.hits.0, 2, &shots),
@@ -960,7 +1034,7 @@ mod tests {
     #[test]
     fn stronger_continuations_never_cost_shots() {
         for k in late_states(13, 40, 300) {
-            let w = worlds(&k, &Posterior::compute(&k), 300, None).unwrap();
+            let w = worlds(&k, &Posterior::compute(&k), 300, Prior::NONE).unwrap();
             let n = w.len();
             let value = |solve, deep| {
                 let mut x: Vec<u32> = (0..n as u32).collect();

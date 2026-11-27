@@ -13,6 +13,7 @@ use super::Shooter;
 use super::habits::{self, Habits, KINDS, Mix};
 use super::last;
 use super::placement::Tilt;
+use super::repeats::{Repeats, SlotWeights};
 use super::search::{self, Tree};
 use crate::bitboard::{Bits, CELLS};
 use crate::fleet::{FLEET_CELLS, LENGTHS, SEGMENTS, SHIPS, Ship, THROUGH};
@@ -20,6 +21,40 @@ use crate::game::{Knowledge, Layout, Outcome};
 use crate::posterior::Posterior;
 use crate::rng::Rng;
 use std::sync::Arc;
+
+/// What the shooter expects of the opponent's placement beyond the rules:
+/// habits per cell, habits per ship and placement, or both.
+#[derive(Clone, Copy, Default)]
+pub struct Prior<'a> {
+    /// P(layout) ∝ Π e^θ over its cells.
+    pub tilt: Option<&'a Tilt>,
+    /// ln weight of each ship at each slot.
+    pub slots: Option<&'a SlotWeights>,
+}
+
+impl Prior<'_> {
+    pub const NONE: Prior<'static> = Prior {
+        tilt: None,
+        slots: None,
+    };
+
+    pub fn is_none(&self) -> bool {
+        self.tilt.is_none() && self.slots.is_none()
+    }
+
+    /// ln weight of `ship` at `slot` when `unknown` are the unshot cells.
+    /// Of the tilt only the unshot cells count: every consistent layout
+    /// holds all the hit cells, so their weight says nothing.
+    #[inline]
+    pub fn ln_weight(&self, ship: usize, slot: usize, unknown: u128) -> f64 {
+        let cells = self.tilt.map_or(0.0, |t| {
+            Bits(SEGMENTS[LENGTHS[ship]][slot] & unknown)
+                .map(|c| t.theta[c])
+                .sum()
+        });
+        cells + self.slots.map_or(0.0, |w| w[ship][slot])
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Search {
@@ -52,6 +87,10 @@ pub struct Search {
     /// How far, in tenths of a shot, the opponent may stray from the
     /// rollouts' estimate.
     pub spread: usize,
+    /// While hunting with the Destroyer afloat, a cell of a smallest cover
+    /// of its places counts as if its chance of a hit were this much
+    /// higher (0 = no cover rule; see `cover`).
+    pub cover: f64,
 }
 
 pub struct Broadside {
@@ -67,6 +106,9 @@ pub struct Broadside {
     /// What the opponent is believed to do about spacing its ships; learns
     /// from its fleets while `learner` is set.
     pub habits: Habits,
+    /// Whether the opponent puts ships back where they lay before; learns
+    /// from its fleets while `learner` is set.
+    pub repeats: Repeats,
 }
 
 /// Learns the opponent's placement habits by model selection.
@@ -190,11 +232,13 @@ impl Broadside {
                 last_nodes: 2_000,
                 race: 0,
                 spread: 15,
+                cover: 0.1,
             },
             prior: None,
             learner: Some(Learner::default()),
             race: None,
             habits: Habits::neutral(),
+            repeats: Repeats::new(),
         }
     }
 
@@ -202,15 +246,19 @@ impl Broadside {
     /// everything it has learned about the opponent (0 for shot cells).
     pub fn chances(&self, k: &Knowledge) -> [f64; CELLS] {
         let p = Posterior::cached(k, self.threads);
-        let prior = self.prior.as_deref();
+        let slots = self.repeats.weights();
+        let prior = Prior {
+            tilt: self.prior.as_deref(),
+            slots: slots.as_deref(),
+        };
         let mix = self
             .spacing()
             .and_then(|kinds| Mix::new(k, &p, &kinds, self.threads));
         // Scores are chances under a prior, weights of layouts without.
-        let (scores, total) = match (&mix, prior) {
+        let (scores, total) = match (&mix, prior.is_none()) {
             (Some(m), _) => (m.scores(prior, k), m.weight()),
-            (None, Some(_)) => (cell_scores(&p, prior, k), 1.0),
-            (None, None) => (cell_scores(&p, None, k), p.layouts as f64),
+            (None, false) => (cell_scores(&p, prior, k), 1.0),
+            (None, true) => (cell_scores(&p, prior, k), p.layouts as f64),
         };
         let unknown = k.unknown();
         let mut out = [0.0; CELLS];
@@ -227,13 +275,14 @@ impl Broadside {
         (kinds != habits::neutral()).then_some(kinds)
     }
 
-    /// No search: always the likeliest cell.
+    /// No search and no cover rule: always the likeliest cell.
     pub fn greedy() -> Self {
         Self {
             search: Search {
                 exact_limit: 0,
                 max_afloat: 0,
                 last_nodes: 0,
+                cover: 0.0,
                 ..Self::new().search
             },
             ..Self::new()
@@ -271,19 +320,15 @@ pub fn occupied_outcomes(k: &Knowledge, cell: usize) -> Vec<Outcome> {
 /// (a product-of-experts approximation: exact constraints, approximate
 /// prior). Only a placement's unshot cells count: every consistent layout
 /// holds all the hit cells, so their weight says nothing.
-pub fn cell_scores(p: &Posterior, prior: Option<&Tilt>, k: &Knowledge) -> [f64; CELLS] {
-    let Some(t) = prior else {
+pub fn cell_scores(p: &Posterior, prior: Prior, k: &Knowledge) -> [f64; CELLS] {
+    if prior.is_none() {
         return p.cells.map(|c| c as f64);
-    };
+    }
     let unknown = k.unknown().0;
     let mut out = [0.0; CELLS];
     for ship in Bits(k.afloat_mask() as u128) {
         let (len, w) = (LENGTHS[ship], &p.ships[ship]);
-        let log = |slot: usize| -> f64 {
-            Bits(SEGMENTS[len][slot] & unknown)
-                .map(|c| t.theta[c])
-                .sum()
-        };
+        let log = |slot: usize| prior.ln_weight(ship, slot, unknown);
         let live = || (0..w.len()).filter(|&slot| w[slot] > 0);
         let top = live().map(log).fold(f64::NEG_INFINITY, f64::max);
         let z: f64 = live()
@@ -348,7 +393,7 @@ fn certain_cells(p: &Posterior, k: &Knowledge) -> (u128, Option<usize>) {
 #[cfg(test)]
 /// The base policy's shot: a cell one ship certainly holds, else a certain
 /// hit, else the likeliest cell; lowest cell on ties.
-fn base_move(k: &Knowledge, p: &Posterior, prior: Option<&Tilt>) -> usize {
+fn base_move(k: &Knowledge, p: &Posterior, prior: Prior) -> usize {
     let (certain, forced) = certain_cells(p, k);
     if let Some(c) = forced {
         return c;
@@ -370,7 +415,7 @@ pub(crate) fn rollout(
     k: &Knowledge,
     first: usize,
     truth: &[Option<u8>; SHIPS],
-    prior: Option<&Tilt>,
+    prior: Prior,
     seen: &mut BaseMoves,
 ) -> u32 {
     let ships: Vec<(usize, u128)> = (0..SHIPS)
@@ -405,7 +450,8 @@ fn opponent_rollout(fleet: &Layout, k: &Knowledge, rng: &mut Rng) -> usize {
         let p = Posterior::cached(&k, 1);
         let (certain, forced) = certain_cells(&p, &k);
         let pool = if certain != 0 { certain } else { k.unknown().0 };
-        let cell = forced.unwrap_or_else(|| best_random(pool, &cell_scores(&p, None, &k), rng));
+        let cell =
+            forced.unwrap_or_else(|| best_random(pool, &cell_scores(&p, Prior::NONE, &k), rng));
         let outcome = match fleet.ship_at(cell) {
             None => Outcome::Miss,
             Some(s) if fleet.ship(s).0 & !(k.hits.0 | 1 << cell) == 0 => Outcome::Sunk(s),
@@ -468,6 +514,7 @@ impl Shooter for Broadside {
         if let Some(l) = self.learner.as_mut() {
             self.prior = l.observe(layout);
             self.habits.observe(layout.contact());
+            self.repeats.observe(layout);
         }
     }
 
@@ -503,7 +550,11 @@ impl Shooter for Broadside {
         if let Some(c) = forced {
             return c;
         }
-        let prior = self.prior.as_deref();
+        let slots = self.repeats.weights();
+        let prior = Prior {
+            tilt: self.prior.as_deref(),
+            slots: slots.as_deref(),
+        };
         let s = self.search;
         // One ship left and no hit on it: every placement in the unshot
         // cells is as likely as any other, and the best order to try them
@@ -534,12 +585,43 @@ impl Shooter for Broadside {
                 None => tree.choose(k.hits.0, self.threads),
             };
         }
-        let scores = match &mix {
+        let mut scores = match &mix {
             Some(m) => m.scores(prior, k),
             None => cell_scores(&p, prior, k),
         };
         // Greedy takes a certain hit before anything else.
         let pool = if certain != 0 { certain } else { unknown };
+        // Hunting the Destroyer is a covering problem (see `cover`): a
+        // shot on a smallest cover of the places still open to it is worth
+        // more than its chance of a hit says. Worth a fixed amount of that
+        // chance, so a cell that a learned belief makes far likelier than
+        // the rest is still shot first.
+        let sunk_len: u32 = (0..SHIPS)
+            .filter(|&s| k.sunk[s].is_some())
+            .map(|s| LENGTHS[s] as u32)
+            .sum();
+        let hunting = k.hits.count() == sunk_len;
+        if s.cover > 0.0 && hunting && k.sunk[SHIPS - 1].is_none() {
+            let live = &mix.as_ref().map_or(&p, |m| &m.support).ships[SHIPS - 1];
+            let (mut across, mut down) = (0u128, 0u128);
+            for c in Bits(unknown) {
+                if live[2 * c] > 0 {
+                    across |= 1 << c;
+                }
+                if live[2 * c + 1] > 0 {
+                    down |= 1 << c;
+                }
+            }
+            // What a score of one whole chance is (as in `chances`).
+            let whole = match (&mix, prior.is_none()) {
+                (Some(m), _) => m.weight(),
+                (None, false) => 1.0,
+                (None, true) => p.layouts as f64,
+            };
+            for c in Bits(super::cover::cover_cells(across, down)) {
+                scores[c] += s.cover * whole;
+            }
+        }
         let sample = mix.is_none() && s.samples >= 2;
         if (k.afloat_mask().count_ones() as usize) <= s.max_afloat && sample {
             let mut cands: Vec<usize> = Bits(pool).collect();
@@ -560,6 +642,43 @@ impl Shooter for Broadside {
 mod tests {
     use super::*;
     use crate::game::{Board, Layout};
+
+    /// One miss in the middle of an empty board: the smallest cover of the
+    /// Destroyer's places is the miss's own colour of the checkerboard.
+    fn one_miss() -> (Knowledge, u128) {
+        let mut k = Knowledge::new();
+        k.record(44, Outcome::Miss);
+        let colour = Bits(k.unknown().0)
+            .filter(|c| (c / 10 + c % 10) % 2 == 0)
+            .fold(0u128, |m, c| m | 1 << c);
+        (k, colour)
+    }
+
+    #[test]
+    fn hunting_keeps_to_a_cover_of_the_destroyer() {
+        let (k, colour) = one_miss();
+        let mut e = Broadside::new();
+        for seed in 0..40 {
+            let c = e.choose(&k, &mut Rng::new(seed));
+            assert!(colour >> c & 1 == 1, "cell {c} is off the cover");
+        }
+    }
+
+    #[test]
+    fn a_likely_cell_outweighs_the_cover() {
+        let (k, colour) = one_miss();
+        // An opponent known to keep a ship on cell 45, which is off the
+        // cover: the cover's bonus must not stand in the way.
+        assert!(colour >> 45 & 1 == 0);
+        let mut theta = [0.0; CELLS];
+        theta[45] = 6.0;
+        let mut e = Broadside {
+            prior: Some(Arc::new(Tilt::from_theta(theta))),
+            learner: None,
+            ..Broadside::new()
+        };
+        assert_eq!(e.choose(&k, &mut Rng::new(1)), 45);
+    }
 
     #[test]
     fn outcome_posteriors_partition_occupied_layouts() {
