@@ -252,6 +252,26 @@ impl Placer for MixedPlacer {
     }
 }
 
+/// When the hunt for `layout` came to each cell in one game: the shots fired
+/// before it, as a share of the board. `shots` are the shooter's, in order.
+///
+/// With a ship hit and not yet sunk, a shot is aimed at it. Like a cell
+/// never shot, it only says that hunting had not come to the cell by then:
+/// halfway from there to the end is the guess.
+pub(crate) fn hunt_times(layout: &Layout, shots: &[usize]) -> [f64; CELLS] {
+    let ships = crate::fleet::FLEET.map(|s| layout.ship(s).0);
+    let end = shots.len() as f64 / CELLS as f64;
+    let mut time = [(end + 1.0) / 2.0; CELLS];
+    let mut shot = 0u128;
+    for (i, &c) in shots.iter().enumerate() {
+        let t = i as f64 / CELLS as f64;
+        let aimed = ships.iter().any(|&m| m & shot != 0 && m & !shot != 0);
+        time[c] = if aimed { (t + 1.0) / 2.0 } else { t };
+        shot |= 1 << c;
+    }
+    time
+}
+
 /// Equilibrium play that turns exploitative against opponents who keep
 /// looking in the same places.
 ///
@@ -388,21 +408,8 @@ impl Placer for AdaptivePlacer {
     }
 
     fn learn(&mut self, layout: &Layout, opponent_shots: &[usize]) {
-        let ships = crate::fleet::FLEET.map(|s| layout.ship(s).0);
-        let mut shot = 0u128;
-        let mut time = [None; CELLS];
-        for (i, &c) in opponent_shots.iter().enumerate() {
-            let t = i as f64 / CELLS as f64;
-            // With a ship hit and not yet sunk, the shot is aimed at it.
-            // Like a cell never shot, it only says that hunting had not
-            // come to the cell by then: halfway to the end is the guess.
-            let aimed = ships.iter().any(|&m| m & shot != 0 && m & !shot != 0);
-            time[c] = Some(if aimed { (t + 1.0) / 2.0 } else { t });
-            shot |= 1 << c;
-        }
-        let end = opponent_shots.len() as f64 / CELLS as f64;
-        for (l, t) in self.late.iter_mut().zip(time) {
-            *l = self.fade * *l + t.unwrap_or((end + 1.0) / 2.0);
+        for (l, t) in self.late.iter_mut().zip(hunt_times(layout, opponent_shots)) {
+            *l = self.fade * *l + t;
         }
         self.games = self.fade * self.games + 1.0;
         // Shots per hit, scaled to the whole fleet: the shots the opponent

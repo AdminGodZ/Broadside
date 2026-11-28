@@ -11,6 +11,7 @@
 
 use super::Shooter;
 use super::habits::{self, Habits, KINDS, Mix};
+use super::hiding::Hiding;
 use super::last;
 use super::placement::Tilt;
 use super::repeats::{Repeats, SlotWeights};
@@ -109,6 +110,9 @@ pub struct Broadside {
     /// Whether the opponent puts ships back where they lay before; learns
     /// from its fleets while `learner` is set.
     pub repeats: Repeats,
+    /// Whether the opponent hides its ships where our hunting comes late;
+    /// learns from its fleets and our shots while `learner` is set.
+    pub hiding: Hiding,
 }
 
 /// Learns the opponent's placement habits by model selection.
@@ -239,6 +243,7 @@ impl Broadside {
             race: None,
             habits: Habits::neutral(),
             repeats: Repeats::new(),
+            hiding: Hiding::new(),
         }
     }
 
@@ -246,7 +251,7 @@ impl Broadside {
     /// everything it has learned about the opponent (0 for shot cells).
     pub fn chances(&self, k: &Knowledge) -> [f64; CELLS] {
         let p = Posterior::cached(k, self.threads);
-        let slots = self.repeats.weights();
+        let slots = self.slots();
         let prior = Prior {
             tilt: self.prior.as_deref(),
             slots: slots.as_deref(),
@@ -266,6 +271,21 @@ impl Broadside {
             out[c] = (scores[c] / total).min(1.0);
         }
         out
+    }
+
+    /// What the opponent's habits with single ships (putting them back, or
+    /// where we look late) make of each ship's places; `None` for nothing.
+    fn slots(&self) -> Option<Arc<SlotWeights>> {
+        match (self.repeats.weights(), self.hiding.weights()) {
+            (Some(a), Some(b)) => {
+                let mut sum = *a;
+                for (x, y) in sum.iter_mut().flatten().zip(b.iter().flatten()) {
+                    *x += y;
+                }
+                Some(Arc::new(sum))
+            }
+            (a, b) => a.or(b),
+        }
     }
 
     /// The belief about the opponent's spacing now; `None` while it is what
@@ -510,11 +530,12 @@ impl Broadside {
 }
 
 impl Shooter for Broadside {
-    fn learn(&mut self, layout: &crate::game::Layout) {
+    fn learn(&mut self, layout: &crate::game::Layout, shots: &[usize]) {
         if let Some(l) = self.learner.as_mut() {
             self.prior = l.observe(layout);
             self.habits.observe(layout.contact());
             self.repeats.observe(layout);
+            self.hiding.observe(layout, shots);
         }
     }
 
@@ -550,7 +571,7 @@ impl Shooter for Broadside {
         if let Some(c) = forced {
             return c;
         }
-        let slots = self.repeats.weights();
+        let slots = self.slots();
         let prior = Prior {
             tilt: self.prior.as_deref(),
             slots: slots.as_deref(),

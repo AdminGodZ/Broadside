@@ -505,20 +505,20 @@ mod tests {
         let mut engine = Broadside::new();
         assert_eq!(engine.spacing(), None);
         for _ in 0..3 {
-            engine.learn(&SpacedPlacer.place(&mut rng));
+            engine.learn(&SpacedPlacer.place(&mut rng), &[]);
         }
         // A few fleets move the belief with care, more of them firmly.
         let spaced = engine.spacing().unwrap();
         assert!(spaced[0] > 0.3 && spaced[0] < 0.6, "{spaced:?}");
         for _ in 0..7 {
-            engine.learn(&SpacedPlacer.place(&mut rng));
+            engine.learn(&SpacedPlacer.place(&mut rng), &[]);
         }
         let spaced = engine.spacing().unwrap();
         assert!(spaced[0] > 0.6, "{spaced:?}");
         // The opposite habit is learned just the same.
         let mut engine = Broadside::new();
         for _ in 0..30 {
-            engine.learn(&ClumpedPlacer.place(&mut rng));
+            engine.learn(&ClumpedPlacer.place(&mut rng), &[]);
         }
         let clumped = engine.spacing().unwrap();
         assert!(clumped[2] > 0.85 && clumped[0] < 0.12, "{clumped:?}");
@@ -527,7 +527,7 @@ mod tests {
             learner: None,
             ..Broadside::new()
         };
-        fixed.learn(&SpacedPlacer.place(&mut rng));
+        fixed.learn(&SpacedPlacer.place(&mut rng), &[]);
         assert_eq!(fixed.spacing(), None);
     }
 }
