@@ -750,6 +750,30 @@ mod adaptive_tests {
     }
 
     #[test]
+    fn an_opponent_who_looks_where_a_hider_hides_is_noticed() {
+        let mut p = AdaptivePlacer::new();
+        p.judge = 0.02;
+        let mut rng = Rng::new(6);
+        // Top half first, in reading order: hiding in the bottom half pays.
+        let top_first: Vec<usize> = (0..CELLS).take(70).collect();
+        for _ in 0..6 {
+            let l = p.place(&mut rng);
+            p.learn(&l, &top_first);
+        }
+        assert!(p.worth[1] > p.worth[0], "{:?}", p.worth);
+        // Then the opponent starts at the bottom, where a hider's ships
+        // lie by now: within a few games hiding is worth less than the
+        // equilibrium mix, though the record still says the bottom is late.
+        let bottom_first: Vec<usize> = (0..CELLS).rev().take(70).collect();
+        for _ in 0..4 {
+            let l = p.place(&mut rng);
+            p.learn(&l, &bottom_first);
+        }
+        assert!(p.worth[1] < p.worth[0], "{:?}", p.worth);
+        assert!(p.late[99] > p.late[0]);
+    }
+
+    #[test]
     fn aimed_shots_do_not_count_as_hunting() {
         let mut p = AdaptivePlacer::new();
         // Carrier along the top row; the opponent hits its first cell and
