@@ -200,7 +200,7 @@ pub const SHOOTERS: &[&str] = &[
 ];
 pub const PLACERS: &[&str] = &[
     "broadside",
-    "broadside:KEY=N,... (fade, top)",
+    "broadside:KEY=N,... (fade, top, judge, recall)",
     "lateness (the adaptive placer before it hid ship by ship)",
     "equilibrium",
     "uniform",
@@ -338,6 +338,11 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
                 match key {
                     "fade" => p.fade = v as f64 / 100.0,
                     "top" => p.top = v,
+                    // Lead (thousandths of the board) at which hiding is
+                    // chosen three times in four; what a judged game still
+                    // counts for a game later (percent).
+                    "judge" => p.judge = v as f64 / 1000.0,
+                    "recall" => p.recall = v as f64 / 100.0,
                     _ => return None,
                 }
             }
