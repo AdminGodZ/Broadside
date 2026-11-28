@@ -215,7 +215,7 @@ pub fn games(
             for i in (m * match_len..games).take(match_len as usize) {
                 let layout = pl.place(&mut Rng::stream(seed, 2 * i));
                 let shots = play_game(sh.as_mut(), layout, &mut Rng::stream(seed, 2 * i + 1));
-                sh.learn(&layout);
+                sh.learn(&layout, &shots);
                 pl.learn(&layout, &shots);
                 let shots = shots.len() as u32;
                 out.push((i, Game { layout, shots }));
@@ -357,8 +357,8 @@ pub fn duel(
                 } else {
                     (nb - !a_first as usize, nb)
                 };
-                sa.learn(&lb);
-                sb.learn(&la);
+                sa.learn(&lb, &shots_a[..fired_a]);
+                sb.learn(&la, &shots_b[..fired_b]);
                 pa.learn(&la, &shots_b[..fired_b]);
                 pb.learn(&lb, &shots_a[..fired_a]);
                 r.a_stats.add(na as u32);

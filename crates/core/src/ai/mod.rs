@@ -4,6 +4,7 @@ pub mod baseline;
 pub mod cover;
 pub mod engine;
 pub mod habits;
+pub mod hiding;
 pub mod last;
 pub mod placement;
 pub mod repeats;
@@ -18,8 +19,9 @@ pub trait Shooter: Send {
     fn name(&self) -> String;
     /// Must return an unshot cell. Called only while ships remain afloat.
     fn choose(&mut self, k: &Knowledge, rng: &mut Rng) -> usize;
-    /// The opponent's layout, revealed after a game.
-    fn learn(&mut self, _layout: &Layout) {}
+    /// After a game: the opponent's layout, and the shots we fired at it in
+    /// order (what the opponent saw of our play).
+    fn learn(&mut self, _layout: &Layout, _shots: &[usize]) {}
     /// Threads a single decision may use (1 unless told otherwise:
     /// simulations run one game per thread instead).
     fn set_threads(&mut self, _threads: usize) {}
@@ -188,7 +190,7 @@ impl Placer for ContraryPlacer {
 
 pub const SHOOTERS: &[&str] = &[
     "broadside",
-    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples, last, race, spread, cover; apart, corners, weight, repeats)",
+    "broadside:KEY=N,... (exact, cands, solve, nodes, deep, afloat, samples, last, race, spread, cover; apart, corners, weight, repeats, hide)",
     "greedy",
     "density",
     "NAME@tiltA (expects tiltA placement)",
@@ -198,7 +200,7 @@ pub const SHOOTERS: &[&str] = &[
 ];
 pub const PLACERS: &[&str] = &[
     "broadside",
-    "broadside:KEY=N,... (fade, top)",
+    "broadside:KEY=N,... (fade, top, judge, recall)",
     "lateness (the adaptive placer before it hid ship by ship)",
     "equilibrium",
     "uniform",
@@ -240,6 +242,8 @@ fn engine(name: &str) -> Option<engine::Broadside> {
             "weight" => e.habits.games = v as f64 / 10.0,
             // Belief that the opponent repeats fleets, in thousandths.
             "repeats" => e.repeats.prior = (v as f64 / 1000.0).min(0.999),
+            // Belief that the opponent hides from our hunting, in thousandths.
+            "hide" => e.hiding.prior = (v as f64 / 1000.0).min(0.999),
             "exact" => s.exact_limit = v,
             "cands" => s.candidates = v,
             "solve" => s.solve_worlds = v,
@@ -334,6 +338,11 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
                 match key {
                     "fade" => p.fade = v as f64 / 100.0,
                     "top" => p.top = v,
+                    // Lead (thousandths of the board) at which hiding is
+                    // chosen three times in four; what a judged game still
+                    // counts for a game later (percent).
+                    "judge" => p.judge = (v as f64 / 1000.0).max(1e-6),
+                    "recall" => p.recall = v as f64 / 100.0,
                     _ => return None,
                 }
             }

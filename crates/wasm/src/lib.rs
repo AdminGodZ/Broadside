@@ -28,6 +28,7 @@ struct Session {
     player: Knowledge,
     engine: Knowledge,
     player_shots: Vec<usize>,
+    engine_shots: Vec<usize>,
     heat: [f32; 100],
 }
 
@@ -79,6 +80,7 @@ pub extern "C" fn bs_new_game(seed: f64) {
                 player: Knowledge::new(),
                 engine: Knowledge::new(),
                 player_shots: Vec::new(),
+                engine_shots: Vec::new(),
                 heat: [0.0; 100],
             }
         });
@@ -89,6 +91,7 @@ pub extern "C" fn bs_new_game(seed: f64) {
         session.player = Knowledge::new();
         session.engine = Knowledge::new();
         session.player_shots.clear();
+        session.engine_shots.clear();
         session.offer = Layout::random(&mut session.rng);
     });
 }
@@ -151,6 +154,7 @@ pub extern "C" fn bs_engine_fire() -> i32 {
         let c = s.shooter.choose(&s.engine, &mut s.rng);
         let o = board.fire(c);
         s.engine.record(c, o);
+        s.engine_shots.push(c);
         c as i32 * 16 + code(o)
     })
 }
@@ -185,7 +189,7 @@ pub extern "C" fn bs_engine_slot(ship: i32) -> i32 {
 pub extern "C" fn bs_finish() {
     with(|s| {
         if let Some(fleet) = s.fleet {
-            s.shooter.learn(&fleet);
+            s.shooter.learn(&fleet, &s.engine_shots);
         }
         s.placer.learn(&s.engine_fleet, &s.player_shots);
     });

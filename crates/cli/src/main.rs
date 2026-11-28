@@ -224,16 +224,28 @@ fn cmd_compare(o: &Opts) -> Result<(), String> {
             .zip(&gb)
             .map(|(x, y)| y.shots as f64 - x.shots as f64)
             .collect();
-        let n = d.len() as f64;
-        let mean = d.iter().sum::<f64>() / n;
-        let sd = (d.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
+        let mean = d.iter().sum::<f64>() / d.len() as f64;
+        // Games of one match depend on each other once players learn, so
+        // matches are the unit for the error bar (as in `duel`).
+        let units: Vec<f64> = d
+            .chunks(match_len.max(1) as usize)
+            .map(|m| m.iter().sum::<f64>() / m.len() as f64)
+            .collect();
+        let n = units.len() as f64;
+        let sd =
+            (units.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
         let (se, wins) = (sd / n.sqrt(), |f: fn(f64) -> bool| {
             d.iter().filter(|&&x| f(x)).count()
         });
         println!(
-            "{a} saves {mean:+.4} ± {se:.4} shots per game over {b} (95% interval {:+.4} to {:+.4})",
+            "{a} saves {mean:+.4} ± {se:.4} shots per game over {b} (95% interval {:+.4} to {:+.4}{})",
             mean - 1.96 * se,
-            mean + 1.96 * se
+            mean + 1.96 * se,
+            if match_len > 1 {
+                ", error bar between matches"
+            } else {
+                ""
+            }
         );
         println!(
             "  better in {} games, worse in {}, equal in {}; seed {seed}",

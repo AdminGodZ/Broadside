@@ -97,9 +97,12 @@ The shooter learns the opponent's placement habits by model selection (uniform, 
 shrunk per-cell occupancy, each scored on predicting the next revealed fleet), so it gains against
 biased placers and loses nothing against uniform ones. It also notices an opponent who puts ships
 back where they lay before. The placer records when the opponent's hunting comes to each cell and
-places a fleet whose best-hidden ship would be found latest; a bandit decides between that and the
-equilibrium mix. Both learn only from what a real game shows: the fleet revealed at the end, and the
-shots actually fired before the game ended.
+places a fleet whose best-hidden ship would be found latest, or one from the equilibrium mix: after
+each game it checks which of the two would have lasted longer against the hunt as it came. The
+shooter in turn knows its own shots, so it keeps the record a hiding opponent would keep and looks
+where that record would send ships, once the opponent's fleets have borne it out
+(<a href="#opponents-who-hide-from-the-hunt">below</a>). Both learn only from what a real game shows:
+the fleet revealed at the end, and the shots actually fired before the game ended.
 </td></tr>
 <tr><td><b>How the opponent spaces ships</b></td><td>
 Many players never let ships touch; some stack them on purpose. Every layout is one of three kinds:
@@ -181,6 +184,38 @@ same engine without the model, search up to 3,000 placements:
 | random placement (`uniform`, matches of 10) | 0.00 ± 0.03 | 0.01 ± 0.03 |
 | the engine's own placement mix (`equilibrium`, matches of 10) | 0.00 ± 0.03 | −0.06 ± 0.03 |
 
+### Opponents who hide from the hunt
+
+An opponent who watches the engine's shots learns more from a game than the engine does: it sees the
+order of some 45 cells, the engine sees 17 cells of a fleet. One that moves its ships to where the
+hunt came late cannot be caught by counting where its ships lay: over matches of 100 it cost the
+engine close to 3 shots a game, and over matches of 10 more than 4.
+
+But what such an opponent knows, the engine knows too: its own shots. It keeps the same record and
+scores, on every revealed fleet, views that expect ships where the record would send them (each cell
+drawn toward late cells, or each ship toward places found late). The views are trusted only as far
+as they have predicted better than assuming nothing. Mean shots needed, search up to 3,000
+placements:
+
+| The opponent's placement | Matches of | Without the model | With it | Games |
+|---|---:|---:|---:|---:|
+| Broadside's own placer (`broadside`) | 10 | 49.21 ± 0.10 | 44.39 ± 0.10 | 8,000 |
+| Broadside's own placer (`broadside`) | 100 | 47.32 ± 0.11 | 44.64 ± 0.11 | 6,000 |
+| every cell tilted toward late cells (`lateness`) | 10 | 46.39 ± 0.09 | 45.51 ± 0.09 | 8,000 |
+| every cell tilted toward late cells (`lateness`) | 100 | 47.13 ± 0.06 | 44.55 ± 0.06 | 20,000 |
+
+Against placers that do not react to the shots the model stays out of the way. Shots saved per game
+on the same layouts: the equilibrium mix 0.00 ± 0.01, random placement −0.01 ± 0.01, a fixed tilt
+(`tilt2`) 0.00 ± 0.01 (matches of 100), fleets that never touch (`spaced`, matches of 20) 0.01 ±
+0.02, each over 6,000 games. Against a new fleet every 3 games (`repeat3`, matches of 12) it costs
+0.05 ± 0.02, next to the 4.9 the repeat model gains there. With the default search, over 3,000 games
+in matches of 10 against the placer as it was before it judged its fleets (below), the model saved
+5.2 ± 0.3 shots (48.3 to 43.1).
+
+<sub>`broadside sim --shooter "broadside:exact=3000" --placer broadside --match 10 --games 8000
+--seed 405`, and the same with `hide=0` added to the shooter; `compare` for the placers that do not
+react.</sub>
+
 ### Opponents with a spacing habit
 
 Shots saved per game by learning how the opponent spaces ships, against the same engine without it.
@@ -259,21 +294,39 @@ from `assets/data/duel-parity.csv`.</sub>
 Broadside (search up to 3,000 placements) against the density bot, which places at random. Only
 Broadside's placement differs between the rows:
 
-| Broadside places | Wins, matches of 100 | Density needs | Wins, matches of 10 |
+| Broadside places | Wins, matches of 100 | Density needs | Wins, matches of 10 | Density needs |
+|---|---:|---:|---:|---:|
+| **hiding ship by ship, judged after each game (default)** | **86.1% ± 0.4** | 56.2 shots | 73.6% ± 0.4 | 51.9 shots |
+| hiding ship by ship, chosen by a bandit on the shots of single games | 83.4% ± 0.4 | 55.5 shots | 69.6% ± 0.5 | 50.7 shots |
+| every cell tilted toward where the opponent looks late (`lateness`, as in v0.1.0) | 64.3% ± 0.4 | 48.9 shots | 58.6% ± 0.5 | |
+| at random | 50.9% ± 0.5 | 44.8 shots | | |
+
+Hiding only pays against an opponent who does not expect it. Once the shooter models a hiding
+opponent (above), a placer that keeps hiding is read: over matches of 100 the shooter needed 44.0
+shots against it, fewer than against the equilibrium mix (44.6). A bandit on the shots of single
+games cannot see that, because a game swings by nine shots and the difference is under one. So after
+each game the placer asks what fleets of both kinds, hidden by its record as it stood and drawn from
+the equilibrium mix, would have been worth against the hunt as it actually came, and places the next
+fleet by which kind has done better of late.
+
+Broadside against itself, both sides with the shooter that models hiding, differing only in
+placement:
+
+| Placement, A against B | Matches of | A wins | Shots needed against A / against B |
 |---|---:|---:|---:|
-| **hiding ship by ship (default)** | **82.7% ± 0.4** | 55.6 shots | 67.8% ± 0.5 |
-| every cell tilted toward where the opponent looks late (`lateness`, the earlier default) | 64.3% ± 0.4 | 48.9 shots | 58.6% ± 0.5 |
-| at random | 50.9% ± 0.5 | 44.8 shots | |
+| default against the bandit version | 100 | 51.7% ± 0.6 | 44.5 / 44.1 |
+| default against the bandit version | 10 | 53.8% ± 0.5 | 44.4 / 43.1 |
+| default against `lateness` | 100 | 50.6% ± 0.5 | 44.6 / 44.5 |
+| default against the equilibrium mix | 100 | 49.2% ± 0.6 | 44.5 / 44.8 |
 
-Against an exact shooter that does not learn, over matches of 20, hiding wins 67.1% ± 0.6 and the
-earlier placer 60.4% ± 0.6.
+So in self-play each side needs about 44.5 shots, and no placer measured gains on another by more
+than the error bar once both shooters expect hiding. Over matches of 10 the equilibrium mix alone is
+still 0.6 shots harder for this shooter than the default placer (45.0 against 44.4); the default
+gives that up for the 4 to 7 shots it gains there on opponents who do not expect hiding.
 
-Broadside against itself, both sides learning, differing only in placement: over matches of 10 the
-hiding side wins 59.9% ± 0.7 against the earlier placer, and the shooter needs 49.5 shots against it
-instead of 46.8. Over matches of 100 the learning shooter catches up: the hiding side wins 48.4% ±
-0.7 against the earlier placer (46.8 against 47.2 shots) and 56.4% ± 0.6 against the equilibrium mix
-(46.8 against 44.9). So in self-play each side needs about 47 shots, not 44: the placers gain more
-than the shooters' learning takes back.
+<sub>`broadside duel "broadside:exact=3000" density --placer-a broadside --match 100 --games 10000
+--seed 407`; self-play rows over 8,000 games. More of the best layouts to choose from (`top=20`) or
+a record that forgets (`fade=90`) lost 0.3 to 0.7 shots against the density bot.</sub>
 
 <details>
 <summary><b>Head-to-head matches</b> (older measurements)</summary>
@@ -316,8 +369,10 @@ Run with `cargo run --release -p broadside -- <command>`.
   `broadside:KEY=N,...` to tune the search (`exact`, `cands`, `solve`, `nodes`, `deep`, `afloat`,
   `samples`, `last`, `race`, `spread`, `cover`; see `Search` in `crates/core/src/ai/engine.rs`) or its
   starting beliefs about the opponent: spacing (`apart`, `corners` in percent, `weight` in tenths of
-  a game) and reusing fleets (`repeats` in thousandths).
-- **Placers:** `broadside`, `equilibrium`, `uniform`, `tiltA`, `mix:A=P,...`, and for testing the
+  a game), reusing fleets (`repeats` in thousandths) and hiding from the hunt (`hide` in
+  thousandths; `hide=0` turns the model off).
+- **Placers:** `broadside` (`broadside:KEY=N,...` to tune it: `judge`, `recall`, `fade`, `top`; see
+  `AdaptivePlacer`), `equilibrium`, `uniform`, `tiltA`, `mix:A=P,...`, and for testing the
   spacing belief `spaced` (no ships touch), `clumped` (every ship lies against another), `swapN`
   (spaced and clumped in turn, N games each) and `contrary` (always the kind of fleet the engine
   expects least); `repeat` and `repeatN` (one fleet for the whole match, or a new one every N
@@ -363,7 +418,12 @@ it with `cd site && npm install && npm run dev`. `npm run test:e2e` plays the bu
       belief that an opponent cannot milk
 - [x] Hunting on a smallest cover of the Destroyer's places; a placer that hides ship by ship; a
       model of opponents who reuse a fleet
-- [ ] The hiding placer over long matches against a shooter that learns (see "Hiding the fleet")
+- [x] A shooter that expects an opponent to hide from its hunt, and a placer that notices a shooter
+      who does
+- [ ] Short matches between two engines that both expect hiding: the equilibrium mix alone is 0.6
+      shots harder to shoot at than the default placer (see "Hiding the fleet")
+- [ ] Speed with a learned belief: early positions are then no longer shared between games, and a
+      game takes 20 to 40 ms on 24 cores instead of 5
 - [ ] Counting a hit by the ship it finds: with the cover rule and search up to 3,000 placements,
       weighting the Destroyer five times and the three-cell ships one and a half times saved a
       further 0.07 ± 0.05 shots, and a small cover bonus while finishing a ship 0.03 ± 0.04. Not
