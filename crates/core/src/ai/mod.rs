@@ -341,7 +341,7 @@ pub fn placer(name: &str) -> Option<Box<dyn Placer>> {
                     // Lead (thousandths of the board) at which hiding is
                     // chosen three times in four; what a judged game still
                     // counts for a game later (percent).
-                    "judge" => p.judge = v as f64 / 1000.0,
+                    "judge" => p.judge = (v as f64 / 1000.0).max(1e-6),
                     "recall" => p.recall = v as f64 / 100.0,
                     _ => return None,
                 }
